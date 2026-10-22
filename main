@@ -1,0 +1,1375 @@
+Предлагаю рабочий вариант: **десктопная программа на Python (tkinter + SQLite)** — один файл, работает офлайн, база хранится рядом в `vols.db`. Это покрывает оба требования: справочник типов кабелей с раскладкой волокон и редактируемая схема разварок по каждой муфте/кроссу.
+
+## Модель данных
+
+- `schemes` — цветовые раскладки (TIA-598C, отечественная, произвольные);
+- `cable_types` — тип кабеля: число модулей × волокон в модуле + раскладка модулей и волокон;
+- `nodes` — объекты (муфта, кросс, ОРШ, АТС);
+- `cables` — кабели с привязкой к типу и двум объектам;
+- `splices` — сварки: волокно кабеля A ↔ волокно кабеля B в конкретном узле, затухание, дата, сварщик.
+
+Номер волокна автоматически раскладывается в пару «модуль + цвет», поэтому в схеме разварок вы видите не абстрактные номера, а реальные цвета.
+
+## Код
+
+```python
+# -*- coding: utf-8 -*-
+"""Учёт сварок ВОЛС. Python 3.9+, стандартная библиотека (tkinter, sqlite3)."""
+
+import sqlite3, csv, datetime
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+
+DB_PATH = "vols.db"
+
+COLOR_HEX = {
+    "Синий": "#1f6fd0", "Оранжевый": "#ff8c1a", "Зелёный": "#17a81a",
+    "Коричневый": "#8b5a2b", "Серый": "#9a9a9a", "Белый": "#f4f4f4",
+    "Красный": "#e02b2b", "Чёрный": "#303030", "Жёлтый": "#f2d024",
+    "Фиолетовый": "#8a3ffc", "Розовый": "#ff8fb1", "Аквамарин": "#30c7c7",
+    "Голубой": "#71c7ec", "Бирюзовый": "#2fb8a8", "Натуральный": "#e8e0c8",
+}
+
+DEFAULT_SCHEMES = {
+    "TIA-598C (12)": ["Синий", "Оранжевый", "Зелёный", "Коричневый", "Серый", "Белый",
+                      "Красный", "Чёрный", "Жёлтый", "Фиолетовый", "Розовый", "Аквамарин"],
+    "Россия / Инкаб (12)": ["Красный", "Зелёный", "Синий", "Жёлтый", "Белый", "Серый",
+                            "Коричневый", "Фиолетовый", "Оранжевый", "Чёрный", "Розовый", "Голубой"],
+    "Простая (4)": ["Синий", "Оранжевый", "Зелёный", "Коричневый"],
+}
+
+
+# ---------------------------------------------------------------- БД
+
+def connect():
+    con = sqlite3.connect(DB_PATH)
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA foreign_keys=ON")
+    return con
+
+
+def q(sql, args=()):
+    con = connect()
+    try:
+        return con.execute(sql, args).fetchall()
+    finally:
+        con.close()
+
+
+def x(sql, args=()):
+    con = connect()
+    try:
+        cur = con.execute(sql, args)
+        con.commit()
+        return cur.lastrowid
+    finally:
+        con.close()
+
+
+def init_db():
+    con = connect()
+    con.executescript("""
+    CREATE TABLE IF NOT EXISTS schemes(
+        id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, colors TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS cable_types(
+        id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL,
+        modules INTEGER NOT NULL, fibers INTEGER NOT NULL,
+        mod_scheme INTEGER REFERENCES schemes(id),
+        fib_scheme INTEGER REFERENCES schemes(id), note TEXT);
+    CREATE TABLE IF NOT EXISTS nodes(
+        id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL,
+        kind TEXT, address TEXT, note TEXT);
+    CREATE TABLE IF NOT EXISTS cables(
+        id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL,
+        type_id INTEGER REFERENCES cable_types(id),
+        node_a INTEGER REFERENCES nodes(id), node_b INTEGER REFERENCES nodes(id),
+        length REAL, note TEXT);
+    CREATE TABLE IF NOT EXISTS splices(
+        id INTEGER PRIMARY KEY,
+        node_id INTEGER REFERENCES nodes(id) ON DELETE CASCADE,
+        cable_a INTEGER REFERENCES cables(id) ON DELETE CASCADE, fiber_a INTEGER,
+        cable_b INTEGER REFERENCES cables(id) ON DELETE CASCADE, fiber_b INTEGER,
+        kind TEXT, loss REAL, sdate TEXT, tech TEXT, note TEXT);
+    """)
+    con.commit()
+    if not con.execute("SELECT 1 FROM schemes").fetchone():
+        for name, colors in DEFAULT_SCHEMES.items():
+            con.execute("INSERT INTO schemes(name,colors) VALUES(?,?)", (name, ",".join(colors)))
+        con.commit()
+        s = {r["name"]: r["id"] for r in con.execute("SELECT id,name FROM schemes")}
+        con.execute("""INSERT INTO cable_types(name,modules,fibers,mod_scheme,fib_scheme,note)
+                       VALUES(?,?,?,?,?,?)""",
+                    ("ОКГ-48 (4x12)", 4, 12, s["Россия / Инкаб (12)"], s["Россия / Инкаб (12)"], ""))
+        con.commit()
+    con.close()
+
+
+# ------------------------------------------------------------ домен
+
+def scheme_colors(scheme_id):
+    r = q("SELECT colors FROM schemes WHERE id=?", (scheme_id,))
+    return [c.strip() for c in r[0]["colors"].split(",")] if r else ["Натуральный"]
+
+
+def type_info(type_id):
+    r = q("SELECT * FROM cable_types WHERE id=?", (type_id,))
+    if not r:
+        return None
+    t = r[0]
+    return {"name": t["name"], "modules": t["modules"], "fibers": t["fibers"],
+            "total": t["modules"] * t["fibers"],
+            "mod": scheme_colors(t["mod_scheme"]), "fib": scheme_colors(t["fib_scheme"])}
+
+
+def cable_type_id(cable_id):
+    r = q("SELECT type_id FROM cables WHERE id=?", (cable_id,))
+    return r[0]["type_id"] if r else None
+
+
+def fiber_label(info, n):
+    """n -> (№ модуля, № в модуле, цвет модуля, цвет волокна)"""
+    i = n - 1
+    m, p = i // info["fibers"], i % info["fibers"]
+    return m + 1, p + 1, info["mod"][m % len(info["mod"])], info["fib"][p % len(info["fib"])]
+
+
+def busy_fibers(node_id, cable_id):
+    rows = q("""SELECT fiber_a AS f FROM splices WHERE node_id=? AND cable_a=?
+                UNION SELECT fiber_b FROM splices WHERE node_id=? AND cable_b=?""",
+             (node_id, cable_id, node_id, cable_id))
+    return {r["f"] for r in rows}
+
+
+# ------------------------------------------------------- вкладка: раскладки
+
+class SchemesTab(ttk.Frame):
+    def __init__(self, master):
+        super().__init__(master, padding=8)
+        self.tree = ttk.Treeview(self, columns=("name", "n", "colors"), show="headings", height=14)
+        for c, t, w in (("name", "Раскладка", 220), ("n", "Волокон", 70), ("colors", "Цвета", 700)):
+            self.tree.heading(c, text=t); self.tree.column(c, width=w)
+        self.tree.grid(row=0, column=0, columnspan=4, sticky="nsew")
+        self.tree.bind("<>", self.on_select)
+
+        ttk.Label(self, text="Название:").grid(row=1, column=0, sticky="w", pady=4)
+        self.e_name = ttk.Entry(self, width=30); self.e_name.grid(row=1, column=1, sticky="w")
+        ttk.Label(self, text="Цвета через запятую:").grid(row=2, column=0, sticky="w")
+        self.e_colors = ttk.Entry(self, width=90); self.e_colors.grid(row=2, column=1, columnspan=3, sticky="we")
+
+        box = ttk.Frame(self); box.grid(row=3, column=0, columnspan=4, sticky="w", pady=6)
+        ttk.Button(box, text="Добавить", command=self.add).pack(side="left", padx=3)
+        ttk.Button(box, text="Сохранить", command=self.save).pack(side="left", padx=3)
+        ttk.Button(box, text="Удалить", command=self.delete).pack(side="left", padx=3)
+        ttk.Label(self, text="Известные цвета: " + ", ".join(COLOR_HEX),
+                  foreground="#666", wraplength=900).grid(row=4, column=0, columnspan=4, sticky="w")
+        self.columnconfigure(3, weight=1); self.rowconfigure(0, weight=1)
+        self.refresh()
+
+    def refresh(self):
+        self.tree.delete(*self.tree.get_children())
+        for r in q("SELECT * FROM schemes ORDER BY name"):
+            cols = r["colors"].split(",")
+            self.tree.insert("", "end", iid=r["id"], values=(r["name"], len(cols), r["colors"]))
+
+    def on_select(self, _=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        v = self.tree.item(sel[0], "values")
+        self.e_name.delete(0, "end"); self.e_name.insert(0, v[0])
+        self.e_colors.delete(0, "end"); self.e_colors.insert(0, v[2])
+
+    def add(self):
+        name, colors = self.e_name.get().strip(), self.e_colors.get().strip()
+        if not name or not colors:
+            return messagebox.showwarning("Данные", "Заполните название и цвета")
+        try:
+            x("INSERT INTO schemes(name,colors) VALUES(?,?)", (name, colors))
+        except sqlite3.IntegrityError:
+            return messagebox.showerror("Ошибка", "Такая раскладка уже есть")
+        self.refresh()
+
+    def save(self):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        x("UPDATE schemes SET name=?, colors=? WHERE id=?",
+          (self.e_name.get().strip(), self.e_colors.get().strip(), sel[0]))
+        self.refresh()
+
+    def delete(self):
+        sel = self.tree.selection()
+        if sel and messagebox.askyesno("Удаление", "Удалить раскладку?"):
+            try:
+                x("DELETE FROM schemes WHERE id=?", (sel[0],))
+            except sqlite3.IntegrityError:
+                return messagebox.showerror("Ошибка", "Раскладка используется типом кабеля")
+            self.refresh()
+
+
+# --------------------------------------------------- вкладка: типы кабелей
+
+class TypesTab(ttk.Frame):
+    def __init__(self, master):
+        super().__init__(master, padding=8)
+        self.tree = ttk.Treeview(self, columns=("name", "m", "f", "t", "ms", "fs"),
+                                 show="headings", height=14)
+        for c, t, w in (("name", "Тип кабеля", 240), ("m", "Модулей", 80), ("f", "Волокон в модуле", 130),
+                        ("t", "Всего волокон", 110), ("ms", "Раскладка модулей", 200),
+                        ("fs", "Раскладка волокон", 200)):
+            self.tree.heading(c, text=t); self.tree.column(c, width=w)
+        self.tree.grid(row=0, column=0, columnspan=6, sticky="nsew")
+        self.tree.bind("<>", self.on_select)
+
+        f = ttk.Frame(self); f.grid(row=1, column=0, columnspan=6, sticky="w", pady=6)
+        ttk.Label(f, text="Название:").grid(row=0, column=0, sticky="w")
+        self.e_name = ttk.Entry(f, width=28); self.e_name.grid(row=0, column=1, padx=4)
+        ttk.Label(f, text="Модулей:").grid(row=0, column=2)
+        self.e_mod = ttk.Spinbox(f, from_=1, to=144, width=6); self.e_mod.grid(row=0, column=3, padx=4)
+        ttk.Label(f, text="Волокон в модуле:").grid(row=0, column=4)
+        self.e_fib = ttk.Spinbox(f, from_=1, to=48, width=6); self.e_fib.grid(row=0, column=5, padx=4)
+        ttk.Label(f, text="Раскладка модулей:").grid(row=1, column=0, sticky="w", pady=4)
+        self.cb_ms = ttk.Combobox(f, width=26, state="readonly"); self.cb_ms.grid(row=1, column=1, padx=4)
+        ttk.Label(f, text="Раскладка волокон:").grid(row=1, column=2, columnspan=2)
+        self.cb_fs = ttk.Combobox(f, width=26, state="readonly"); self.cb_fs.grid(row=1, column=4, columnspan=2)
+
+        box = ttk.Frame(self); box.grid(row=2, column=0, columnspan=6, sticky="w")
+        ttk.Button(box, text="Добавить", command=self.add).pack(side="left", padx=3)
+        ttk.Button(box, text="Сохранить", command=self.save).pack(side="left", padx=3)
+        ttk.Button(box, text="Удалить", command=self.delete).pack(side="left", padx=3)
+        ttk.Button(box, text="Показать раскладку волокон", command=self.show_layout).pack(side="left", padx=12)
+        self.columnconfigure(5, weight=1); self.rowconfigure(0, weight=1)
+        self.refresh()
+
+    def refresh(self):
+        self.schemes = {r["name"]: r["id"] for r in q("SELECT id,name FROM schemes ORDER BY name")}
+        names = list(self.schemes)
+        self.cb_ms["values"] = names; self.cb_fs["values"] = names
+        self.tree.delete(*self.tree.get_children())
+        for r in q("""SELECT t.*, sm.name AS msn, sf.name AS fsn FROM cable_types t
+                      LEFT JOIN schemes sm ON sm.id=t.mod_scheme
+                      LEFT JOIN schemes sf ON sf.id=t.fib_scheme ORDER BY t.name"""):
+            self.tree.insert("", "end", iid=r["id"], values=(
+                r["name"], r["modules"], r["fibers"], r["modules"] * r["fibers"], r["msn"], r["fsn"]))
+
+    def on_select(self, _=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        v = self.tree.item(sel[0], "values")
+        self.e_name.delete(0, "end"); self.e_name.insert(0, v[0])
+        self.e_mod.delete(0, "end"); self.e_mod.insert(0, v[1])
+        self.e_fib.delete(0, "end"); self.e_fib.insert(0, v[2])
+        self.cb_ms.set(v[4] or ""); self.cb_fs.set(v[5] or "")
+
+    def _form(self):
+        try:
+            return (self.e_name.get().strip(), int(self.e_mod.get()), int(self.e_fib.get()),
+                    self.schemes.get(self.cb_ms.get()), self.schemes.get(self.cb_fs.get()))
+        except ValueError:
+            messagebox.showwarning("Данные", "Проверьте числовые поля"); return None
+
+    def add(self):
+        d = self._form()
+        if not d or not d[0]:
+            return
+        try:
+            x("""INSERT INTO cable_types(name,modules,fibers,mod_scheme,fib_scheme)
+                 VALUES(?,?,?,?,?)""", d)
+        except sqlite3.IntegrityError:
+            return messagebox.showerror("Ошибка", "Такой тип уже существует")
+        self.refresh()
+
+    def save(self):
+        sel = self.tree.selection(); d = self._form()
+        if sel and d:
+            x("""UPDATE cable_types SET name=?,modules=?,fibers=?,mod_scheme=?,fib_scheme=?
+                 WHERE id=?""", (*d, sel[0]))
+            self.refresh()
+
+    def delete(self):
+        sel = self.tree.selection()
+        if sel and messagebox.askyesno("Удаление", "Удалить тип кабеля?"):
+            try:
+                x("DELETE FROM cable_types WHERE id=?", (sel[0],))
+            except sqlite3.IntegrityError:
+                return messagebox.showerror("Ошибка", "Тип используется в кабелях")
+            self.refresh()
+
+    def show_layout(self):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        info = type_info(sel[0])
+        w = tk.Toplevel(self); w.title("Раскладка: " + info["name"]); w.geometry("520x600")
+        tv = ttk.Treeview(w, columns=("n", "m", "mc", "p", "fc"), show="headings")
+        for c, t, wd in (("n", "№ волокна", 80), ("m", "Модуль", 70), ("mc", "Цвет модуля", 130),
+                         ("p", "№ в модуле", 90), ("fc", "Цвет волокна", 130)):
+            tv.heading(c, text=t); tv.column(c, width=wd)
+        tv.pack(fill="both", expand=True)
+        for name, hexv in COLOR_HEX.items():
+            tv.tag_configure(name, background=hexv,
+                             foreground="#fff" if name in ("Чёрный", "Коричневый", "Синий", "Фиолетовый") else "#000")
+        for n in range(1, info["total"] + 1):
+            m, p, mc, fc = fiber_label(info, n)
+            tv.insert("", "end", values=(n, m, mc, p, fc), tags=(fc,))
+
+
+# ------------------------------------------------------- вкладка: объекты
+
+class NodesTab(ttk.Frame):
+    KINDS = ["Муфта", "Кросс (ODF)", "ОРШ", "АТС/Узел", "Абонентский бокс"]
+
+    def __init__(self, master):
+        super().__init__(master, padding=8)
+        self.tree = ttk.Treeview(self, columns=("name", "kind", "addr", "note"), show="headings", height=16)
+        for c, t, w in (("name", "Название", 220), ("kind", "Тип", 140),
+                        ("addr", "Адрес / привязка", 320), ("note", "Примечание", 320)):
+            self.tree.heading(c, text=t); self.tree.column(c, width=w)
+        self.tree.grid(row=0, column=0, columnspan=8, sticky="nsew")
+        self.tree.bind("<>", self.on_select)
+
+        f = ttk.Frame(self); f.grid(row=1, column=0, columnspan=8, sticky="w", pady=6)
+        ttk.Label(f, text="Название:").grid(row=0, column=0)
+        self.e_name = ttk.Entry(f, width=24); self.e_name.grid(row=0, column=1, padx=4)
+        ttk.Label(f, text="Тип:").grid(row=0, column=2)
+        self.cb_kind = ttk.Combobox(f, values=self.KINDS, width=18, state="readonly")
+        self.cb_kind.grid(row=0, column=3, padx=4); self.cb_kind.current(0)
+        ttk.Label(f, text="Адрес:").grid(row=0, column=4)
+        self.e_addr = ttk.Entry(f, width=34); self.e_addr.grid(row=0, column=5, padx=4)
+        ttk.Label(f, text="Примечание:").grid(row=0, column=6)
+        self.e_note = ttk.Entry(f, width=30); self.e_note.grid(row=0, column=7, padx=4)
+
+        box = ttk.Frame(self); box.grid(row=2, column=0, columnspan=8, sticky="w")
+        ttk.Button(box, text="Добавить", command=self.add).pack(side="left", padx=3)
+        ttk.Button(box, text="Сохранить", command=self.save).pack(side="left", padx=3)
+        ttk.Button(box, text="Удалить", command=self.delete).pack(side="left", padx=3)
+        self.columnconfigure(7, weight=1); self.rowconfigure(0, weight=1)
+        self.refresh()
+
+    def refresh(self):
+        self.tree.delete(*self.tree.get_children())
+        for r in q("SELECT * FROM nodes ORDER BY name"):
+            self.tree.insert("", "end", iid=r["id"],
+                             values=(r["name"], r["kind"] or "", r["address"] or "", r["note"] or ""))
+
+    def on_select(self, _=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        v = self.tree.item(sel[0], "values")
+        for e, val in ((self.e_name, v[0]), (self.e_addr, v[2]), (self.e_note, v[3])):
+            e.delete(0, "end"); e.insert(0, val)
+        self.cb_kind.set(v[1] or self.KINDS[0])
+
+    def add(self):
+        if not self.e_name.get().strip():
+            return
+        try:
+            x("INSERT INTO nodes(name,kind,address,note) VALUES(?,?,?,?)",
+              (self.e_name.get().strip(), self.cb_kind.get(), self.e_addr.get(), self.e_note.get()))
+        except sqlite3.IntegrityError:
+            return messagebox.showerror("Ошибка", "Объект с таким названием уже есть")
+        self.refresh()
+
+    def save(self):
+        sel = self.tree.selection()
+        if sel:
+            x("UPDATE nodes SET name=?,kind=?,address=?,note=? WHERE id=?",
+              (self.e_name.get().strip(), self.cb_kind.get(), self.e_addr.get(), self.e_note.get(), sel[0]))
+            self.refresh()
+
+    def delete(self):
+        sel = self.tree.selection()
+        if sel and messagebox.askyesno("Удаление", "Удалить объект вместе со сварками?"):
+            x("DELETE FROM nodes WHERE id=?", (sel[0],))
+            self.refresh()
+
+
+# -------------------------------------------------------- вкладка: кабели
+
+class CablesTab(ttk.Frame):
+    def __init__(self, master):
+        super().__init__(master, padding=8)
+        self.tree = ttk.Treeview(self, columns=("name", "type", "a", "b", "len", "note"),
+                                 show="headings", height=16)
+        for c, t, w in (("name", "Кабель", 200), ("type", "Тип", 190), ("a", "Объект A", 170),
+                        ("b", "Объект B", 170), ("len", "Длина, м", 90), ("note", "Примечание", 260)):
+            self.tree.heading(c, text=t); self.tree.column(c, width=w)
+        self.tree.grid(row=0, column=0, columnspan=8, sticky="nsew")
+        self.tree.bind("<>", self.on_select)
+
+        f = ttk.Frame(self); f.grid(row=1, column=0, columnspan=8, sticky="w", pady=6)
+        ttk.Label(f, text="Название:").grid(row=0, column=0)
+        self.e_name = ttk.Entry(f, width=22); self.e_name.grid(row=0, column=1, padx=4)
+        ttk.Label(f, text="Тип:").grid(row=0, column=2)
+        self.cb_type = ttk.Combobox(f, width=24, state="readonly"); self.cb_type.grid(row=0, column=3, padx=4)
+        ttk.Label(f, text="Длина, м:").grid(row=0, column=4)
+        self.e_len = ttk.Entry(f, width=10); self.e_len.grid(row=0, column=5, padx=4)
+        ttk.Label(f, text="Объект A:").grid(row=1, column=0, pady=4)
+        self.cb_a = ttk.Combobox(f, width=22, state="readonly"); self.cb_a.grid(row=1, column=1, padx=4)
+        ttk.Label(f, text="Объект B:").grid(row=1, column=2)
+        self.cb_b = ttk.Combobox(f, width=22, state="readonly"); self.cb_b.grid(row=1, column=3, padx=4)
+        ttk.Label(f, text="Примечание:").grid(row=1, column=4)
+        self.e_note = ttk.Entry(f, width=30); self.e_note.grid(row=1, column=5, padx=4)
+
+        box = ttk.Frame(self); box.grid(row=2, column=0, columnspan=8, sticky="w")
+        ttk.Button(box, text="Добавить", command=self.add).pack(side="left", padx=3)
+        ttk.Button(box, text="Сохранить", command=self.save).pack(side="left", padx=3)
+        ttk.Button(box, text="Удалить", command=self.delete).pack(side="left", padx=3)
+        self.columnconfigure(7, weight=1); self.rowconfigure(0, weight=1)
+        self.refresh()
+
+    def refresh(self):
+        self.types = {r["name"]: r["id"] for r in q("SELECT id,name FROM cable_types ORDER BY name")}
+        self.nodes = {r["name"]: r["id"] for r in q("SELECT id,name FROM nodes ORDER BY name")}
+        self.cb_type["values"] = list(self.types)
+        self.cb_a["values"] = [""] + list(self.nodes)
+        self.cb_b["values"] = [""] + list(self.nodes)
+        self.tree.delete(*self.tree.get_children())
+        for r in q("""SELECT c.*, t.name AS tn, na.name AS an, nb.name AS bn FROM cables c
+                      LEFT JOIN cable_types t ON t.id=c.type_id
+                      LEFT JOIN nodes na ON na.id=c.node_a
+                      LEFT JOIN nodes nb ON nb.id=c.node_b ORDER BY c.name"""):
+            self.tree.insert("", "end", iid=r["id"], values=(
+                r["name"], r["tn"] or "", r["an"] or "", r["bn"] or "",
+                r["length"] or "", r["note"] or ""))
+
+    def on_select(self, _=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        v = self.tree.item(sel[0], "values")
+        for e, val in ((self.e_name, v[0]), (self.e_len, v[4]), (self.e_note, v[5])):
+            e.delete(0, "end"); e.insert(0, val)
+        self.cb_type.set(v[1]); self.cb_a.set(v[2]); self.cb_b.set(v[3])
+
+    def _form(self):
+        try:
+            length = float(self.e_len.get().replace(",", ".")) if self.e_len.get().strip() else None
+        except ValueError:
+            messagebox.showwarning("Данные", "Длина должна быть числом"); return None
+        return (self.e_name.get().strip(), self.types.get(self.cb_type.get()),
+                self.nodes.get(self.cb_a.get()), self.nodes.get(self.cb_b.get()),
+                length, self.e_note.get())
+
+    def add(self):
+        d = self._form()
+        if not d or not d[0] or not d[1]:
+            return messagebox.showwarning("Данные", "Укажите название и тип кабеля")
+        try:
+            x("INSERT INTO cables(name,type_id,node_a,node_b,length,note) VALUES(?,?,?,?,?,?)", d)
+        except sqlite3.IntegrityError:
+            return messagebox.showerror("Ошибка", "Кабель с таким названием уже есть")
+        self.refresh()
+
+    def save(self):
+        sel = self.tree.selection(); d = self._form()
+        if sel and d:
+            x("""UPDATE cables SET name=?,type_id=?,node_a=?,node_b=?,length=?,note=?
+                 WHERE id=?""", (*d, sel[0]))
+            self.refresh()
+
+    def delete(self):
+        sel = self.tree.selection()
+        if sel and messagebox.askyesno("Удаление", "Удалить кабель и его сварки?"):
+            x("DELETE FROM cables WHERE id=?", (sel[0],))
+            self.refresh()
+
+
+# ------------------------------------------------- диалог параметров сварки
+
+class SpliceDialog(tk.Toplevel):
+    def __init__(self, master, data=None):
+        super().__init__(master)
+        self.title("Параметры сварки"); self.resizable(False, False); self.result = None
+        d = data or {}
+        rows = [("Тип соединения", "kind", d.get("kind", "Сварка")),
+                ("Затухание, дБ", "loss", d.get("loss", "")),
+                ("Дата", "sdate", d.get("sdate", datetime.date.today().isoformat())),
+                ("Исполнитель", "tech", d.get("tech", "")),
+                ("Примечание", "note", d.get("note", ""))]
+        self.w = {}
+        for i, (label, key, val) in enumerate(rows):
+            ttk.Label(self, text=label + ":").grid(row=i, column=0, sticky="w", padx=8, pady=3)
+            if key == "kind":
+                e = ttk.Combobox(self, values=["Сварка", "Механическое", "Коннектор", "Транзит"],
+                                 width=22, state="readonly")
+                e.set(val or "Сварка")
+            else:
+                e = ttk.Entry(self, width=25); e.insert(0, "" if val is None else str(val))
+            e.grid(row=i, column=1, padx=8, pady=3); self.w[key] = e
+        box = ttk.Frame(self); box.grid(row=len(rows), column=0, columnspan=2, pady=8)
+        ttk.Button(box, text="OK", command=self.ok).pack(side="left", padx=5)
+        ttk.Button(box, text="Отмена", command=self.destroy).pack(side="left", padx=5)
+        self.transient(master); self.grab_set(); self.wait_window(self)
+
+    def ok(self):
+        loss = self.w["loss"].get().replace(",", ".").strip()
+        try:
+            loss = float(loss) if loss else None
+        except ValueError:
+            return messagebox.showwarning("Данные", "Затухание должно быть числом", parent=self)
+        self.result = {"kind": self.w["kind"].get(), "loss": loss, "sdate": self.w["sdate"].get(),
+                       "tech": self.w["tech"].get(), "note": self.w["note"].get()}
+        self.destroy()
+
+
+# ------------------------------------------------------- вкладка: разварки
+
+class SpliceTab(ttk.Frame):
+    def __init__(self, master):
+        super().__init__(master, padding=8)
+        top = ttk.Frame(self); top.pack(fill="x")
+        ttk.Label(top, text="Объект:").pack(side="left")
+        self.cb_node = ttk.Combobox(top, width=30, state="readonly"); self.cb_node.pack(side="left", padx=6)
+        self.cb_node.bind("<>", lambda e: self.on_node())
+        ttk.Button(top, text="Обновить", command=self.refresh).pack(side="left", padx=4)
+        ttk.Button(top, text="Экспорт в CSV", command=self.export).pack(side="right", padx=4)
+
+        mid = ttk.Frame(self); mid.pack(fill="both", expand=True, pady=8)
+
+        self.fa = self._fiber_panel(mid, "Кабель A", 0)
+        center = ttk.Frame(mid); center.grid(row=0, column=1, padx=10, sticky="n")
+        ttk.Button(center, text="Сварить  →", command=self.splice_selected).pack(pady=4, fill="x")
+        ttk.Button(center, text="Сварить 1:1", command=self.splice_all).pack(pady=4, fill="x")
+        ttk.Button(center, text="Изменить", command=self.edit).pack(pady=12, fill="x")
+        ttk.Button(center, text="Удалить", command=self.delete).pack(pady=4, fill="x")
+        self.fb = self._fiber_panel(mid, "Кабель B", 2)
+        mid.columnconfigure(0, weight=1); mid.columnconfigure(2, weight=1); mid.rowconfigure(0, weight=1)
+
+        bottom = ttk.Panedwindow(self, orient="horizontal"); bottom.pack(fill="both", expand=True)
+        lf = ttk.Labelframe(bottom, text="Схема разварки объекта")
+        self.tree = ttk.Treeview(lf, columns=("ca", "fa", "cb", "fb", "kind", "loss", "d", "t"),
+                                 show="headings", height=10)
+        heads = (("ca", "Кабель A", 130), ("fa", "Волокно A", 160), ("cb", "Кабель B", 130),
+                 ("fb", "Волокно B", 160), ("kind", "Тип", 90), ("loss", "дБ", 60),
+                 ("d", "Дата", 90), ("t", "Исполнитель", 110))
+        for c, t, w in heads:
+            self.tree.heading(c, text=t); self.tree.column(c, width=w)
+        self.tree.pack(fill="both", expand=True)
+        self.tree.bind("", lambda e: self.edit())
+        bottom.add(lf, weight=3)
+
+        gf = ttk.Labelframe(bottom, text="Визуализация")
+        self.canvas = tk.Canvas(gf, bg="white", width=360)
+        self.canvas.pack(fill="both", expand=True)
+        bottom.add(gf, weight=2)
+
+        self.refresh()
+
+    def _fiber_panel(self, parent, title, col):
+        lf = ttk.Labelframe(parent, text=title)
+        lf.grid(row=0, column=col, sticky="nsew")
+        cb = ttk.Combobox(lf, state="readonly"); cb.pack(fill="x", padx=4, pady=4)
+        tv = ttk.Treeview(lf, columns=("n", "m", "fc", "st"), show="headings",
+                          selectmode="extended", height=12)
+        for c, t, w in (("n", "№", 50), ("m", "Модуль", 110), ("fc", "Волокно", 110), ("st", "Статус", 150)):
+            tv.heading(c, text=t); tv.column(c, width=w)
+        tv.pack(fill="both", expand=True, padx=4, pady=4)
+        for name, hexv in COLOR_HEX.items():
+            tv.tag_configure(name, background=hexv,
+                             foreground="#fff" if name in ("Чёрный", "Коричневый", "Синий", "Фиолетовый") else "#000")
+        panel = {"cb": cb, "tv": tv}
+        cb.bind("<>", lambda e: self.fill_fibers(panel))
+        return panel
+
+    # --- данные
+    def refresh(self):
+        self.nodes = {r["name"]: r["id"] for r in q("SELECT id,name FROM nodes ORDER BY name")}
+        cur = self.cb_node.get()
+        self.cb_node["values"] = list(self.nodes)
+        if cur in self.nodes:
+            self.cb_node.set(cur)
+        elif self.nodes:
+            self.cb_node.current(0)
+        self.on_node()
+
+    def node_id(self):
+        return self.nodes.get(self.cb_node.get())
+
+    def on_node(self):
+        nid = self.node_id()
+        rows = q("""SELECT id,name FROM cables WHERE node_a=? OR node_b=? ORDER BY name""", (nid, nid)) if nid else []
+        self.cables = {r["name"]: r["id"] for r in rows}
+        for p in (self.fa, self.fb):
+            p["cb"]["values"] = list(self.cables)
+            p["cb"].set("")
+            p["tv"].delete(*p["tv"].get_children())
+        self.load_splices()
+
+    def fill_fibers(self, panel):
+        tv = panel["tv"]; tv.delete(*tv.get_children())
+        cid = self.cables.get(panel["cb"].get())
+        nid = self.node_id()
+        if not cid or not nid:
+            return
+        info = type_info(cable_type_id(cid))
+        if not info:
+            return
+        busy = {}
+        for r in q("""SELECT * FROM splices WHERE node_id=? AND (cable_a=? OR cable_b=?)""", (nid, cid, cid)):
+            if r["cable_a"] == cid:
+                other, of = r["cable_b"], r["fiber_b"]
+                busy[r["fiber_a"]] = (other, of)
+            if r["cable_b"] == cid:
+                busy[r["fiber_b"]] = (r["cable_a"], r["fiber_a"])
+        names = {v: k for k, v in self.cables.items()}
+        for n in range(1, info["total"] + 1):
+            m, p, mc, fc = fiber_label(info, n)
+            if n in busy:
+                oc, of = busy[n]
+                st = f"→ {names.get(oc, '?')} / в.{of}"
+            else:
+                st = "свободно"
+            tv.insert("", "end", iid=str(n), values=(n, f"{m} ({mc})", f"{p} ({fc})", st), tags=(fc,))
+
+    def load_splices(self):
+        self.tree.delete(*self.tree.get_children())
+        nid = self.node_id()
+        if not nid:
+            self.draw(); return
+        rows = q("""SELECT s.*, ca.name AS can, cb.name AS cbn FROM splices s
+                    LEFT JOIN cables ca ON ca.id=s.cable_a
+                    LEFT JOIN cables cb ON cb.id=s.cable_b
+                    WHERE s.node_id=? ORDER BY ca.name, s.fiber_a""", (nid,))
+        self.rows = rows
+        for r in rows:
+            ia, ib = type_info(cable_type_id(r["cable_a"])), type_info(cable_type_id(r["cable_b"]))
+            la = "%d (%s/%s)" % (r["fiber_a"], *fiber_label(ia, r["fiber_a"])[2:]) if ia else r["fiber_a"]
+            lb = "%d (%s/%s)" % (r["fiber_b"], *fiber_label(ib, r["fiber_b"])[2:]) if ib else r["fiber_b"]
+            self.tree.insert("", "end", iid=r["id"], values=(
+                r["can"], la, r["cbn"], lb, r["kind"] or "", r["loss"] if r["loss"] is not None else "",
+                r["sdate"] or "", r["tech"] or ""))
+        self.draw()
+
+    # --- действия
+    def splice_selected(self):
+        nid = self.node_id()
+        ca, cb = self.cables.get(self.fa["cb"].get()), self.cables.get(self.fb["cb"].get())
+        if not (nid and ca and cb):
+            return messagebox.showwarning("Выбор", "Выберите объект и оба кабеля")
+        sa = sorted(int(i) for i in self.fa["tv"].selection())
+        sb = sorted(int(i) for i in self.fb["tv"].selection())
+        if not sa or len(sa) != len(sb):
+            return messagebox.showwarning("Выбор", "Выделите одинаковое количество волокон слева и справа")
+        if ca == cb and set(sa) & set(sb):
+            return messagebox.showwarning("Выбор", "Нельзя сварить волокно само с собой")
+        dlg = SpliceDialog(self)
+        if not dlg.result:
+            return
+        p, busy_a, busy_b = dlg.result, busy_fibers(nid, ca), busy_fibers(nid, cb)
+        skipped = 0
+        for f1, f2 in zip(sa, sb):
+            if f1 in busy_a or f2 in busy_b:
+                skipped += 1; continue
+            x("""INSERT INTO splices(node_id,cable_a,fiber_a,cable_b,fiber_b,kind,loss,sdate,tech,note)
+                 VALUES(?,?,?,?,?,?,?,?,?,?)""",
+              (nid, ca, f1, cb, f2, p["kind"], p["loss"], p["sdate"], p["tech"], p["note"]))
+            busy_a.add(f1); busy_b.add(f2)
+        if skipped:
+            messagebox.showinfo("Готово", f"Пропущено занятых волокон: {skipped}")
+        self.after_change()
+
+    def splice_all(self):
+        nid = self.node_id()
+        ca, cb = self.cables.get(self.fa["cb"].get()), self.cables.get(self.fb["cb"].get())
+        if not (nid and ca and cb) or ca == cb:
+            return messagebox.showwarning("Выбор", "Выберите два разных кабеля")
+        ia, ib = type_info(cable_type_id(ca)), type_info(cable_type_id(cb))
+        dlg = SpliceDialog(self)
+        if not dlg.result:
+            return
+        p, busy_a, busy_b = dlg.result, busy_fibers(nid, ca), busy_fibers(nid, cb)
+        for n in range(1, min(ia["total"], ib["total"]) + 1):
+            if n in busy_a or n in busy_b:
+                continue
+            x("""INSERT INTO splices(node_id,cable_a,fiber_a,cable_b,fiber_b,kind,loss,sdate,tech,note)
+                 VALUПредлагаю рабочий вариант: **десктопная программа на Python (tkinter + SQLite)** — один файл, работает офлайн, база хранится рядом в `vols.db`. Это покрывает оба требования: справочник типов кабелей с раскладкой волокон и редактируемая схема разварок по каждой муфте/кроссу.
+
+## Модель данных
+
+- `schemes` — цветовые раскладки (TIA-598C, отечественная, произвольные);
+- `cable_types` — тип кабеля: число модулей × волокон в модуле + раскладка модулей и волокон;
+- `nodes` — объекты (муфта, кросс, ОРШ, АТС);
+- `cables` — кабели с привязкой к типу и двум объектам;
+- `splices` — сварки: волокно кабеля A ↔ волокно кабеля B в конкретном узле, затухание, дата, сварщик.
+
+Номер волокна автоматически раскладывается в пару «модуль + цвет», поэтому в схеме разварок вы видите не абстрактные номера, а реальные цвета.
+
+## Код
+
+```python
+# -*- coding: utf-8 -*-
+"""Учёт сварок ВОЛС. Python 3.9+, стандартная библиотека (tkinter, sqlite3)."""
+
+import sqlite3, csv, datetime
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+
+DB_PATH = "vols.db"
+
+COLOR_HEX = {
+    "Синий": "#1f6fd0", "Оранжевый": "#ff8c1a", "Зелёный": "#17a81a",
+    "Коричневый": "#8b5a2b", "Серый": "#9a9a9a", "Белый": "#f4f4f4",
+    "Красный": "#e02b2b", "Чёрный": "#303030", "Жёлтый": "#f2d024",
+    "Фиолетовый": "#8a3ffc", "Розовый": "#ff8fb1", "Аквамарин": "#30c7c7",
+    "Голубой": "#71c7ec", "Бирюзовый": "#2fb8a8", "Натуральный": "#e8e0c8",
+}
+
+DEFAULT_SCHEMES = {
+    "TIA-598C (12)": ["Синий", "Оранжевый", "Зелёный", "Коричневый", "Серый", "Белый",
+                      "Красный", "Чёрный", "Жёлтый", "Фиолетовый", "Розовый", "Аквамарин"],
+    "Россия / Инкаб (12)": ["Красный", "Зелёный", "Синий", "Жёлтый", "Белый", "Серый",
+                            "Коричневый", "Фиолетовый", "Оранжевый", "Чёрный", "Розовый", "Голубой"],
+    "Простая (4)": ["Синий", "Оранжевый", "Зелёный", "Коричневый"],
+}
+
+
+# ---------------------------------------------------------------- БД
+
+def connect():
+    con = sqlite3.connect(DB_PATH)
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA foreign_keys=ON")
+    return con
+
+
+def q(sql, args=()):
+    con = connect()
+    try:
+        return con.execute(sql, args).fetchall()
+    finally:
+        con.close()
+
+
+def x(sql, args=()):
+    con = connect()
+    try:
+        cur = con.execute(sql, args)
+        con.commit()
+        return cur.lastrowid
+    finally:
+        con.close()
+
+
+def init_db():
+    con = connect()
+    con.executescript("""
+    CREATE TABLE IF NOT EXISTS schemes(
+        id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, colors TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS cable_types(
+        id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL,
+        modules INTEGER NOT NULL, fibers INTEGER NOT NULL,
+        mod_scheme INTEGER REFERENCES schemes(id),
+        fib_scheme INTEGER REFERENCES schemes(id), note TEXT);
+    CREATE TABLE IF NOT EXISTS nodes(
+        id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL,
+        kind TEXT, address TEXT, note TEXT);
+    CREATE TABLE IF NOT EXISTS cables(
+        id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL,
+        type_id INTEGER REFERENCES cable_types(id),
+        node_a INTEGER REFERENCES nodes(id), node_b INTEGER REFERENCES nodes(id),
+        length REAL, note TEXT);
+    CREATE TABLE IF NOT EXISTS splices(
+        id INTEGER PRIMARY KEY,
+        node_id INTEGER REFERENCES nodes(id) ON DELETE CASCADE,
+        cable_a INTEGER REFERENCES cables(id) ON DELETE CASCADE, fiber_a INTEGER,
+        cable_b INTEGER REFERENCES cables(id) ON DELETE CASCADE, fiber_b INTEGER,
+        kind TEXT, loss REAL, sdate TEXT, tech TEXT, note TEXT);
+    """)
+    con.commit()
+    if not con.execute("SELECT 1 FROM schemes").fetchone():
+        for name, colors in DEFAULT_SCHEMES.items():
+            con.execute("INSERT INTO schemes(name,colors) VALUES(?,?)", (name, ",".join(colors)))
+        con.commit()
+        s = {r["name"]: r["id"] for r in con.execute("SELECT id,name FROM schemes")}
+        con.execute("""INSERT INTO cable_types(name,modules,fibers,mod_scheme,fib_scheme,note)
+                       VALUES(?,?,?,?,?,?)""",
+                    ("ОКГ-48 (4x12)", 4, 12, s["Россия / Инкаб (12)"], s["Россия / Инкаб (12)"], ""))
+        con.commit()
+    con.close()
+
+
+# ------------------------------------------------------------ домен
+
+def scheme_colors(scheme_id):
+    r = q("SELECT colors FROM schemes WHERE id=?", (scheme_id,))
+    return [c.strip() for c in r[0]["colors"].split(",")] if r else ["Натуральный"]
+
+
+def type_info(type_id):
+    r = q("SELECT * FROM cable_types WHERE id=?", (type_id,))
+    if not r:
+        return None
+    t = r[0]
+    return {"name": t["name"], "modules": t["modules"], "fibers": t["fibers"],
+            "total": t["modules"] * t["fibers"],
+            "mod": scheme_colors(t["mod_scheme"]), "fib": scheme_colors(t["fib_scheme"])}
+
+
+def cable_type_id(cable_id):
+    r = q("SELECT type_id FROM cables WHERE id=?", (cable_id,))
+    return r[0]["type_id"] if r else None
+
+
+def fiber_label(info, n):
+    """n -> (№ модуля, № в модуле, цвет модуля, цвет волокна)"""
+    i = n - 1
+    m, p = i // info["fibers"], i % info["fibers"]
+    return m + 1, p + 1, info["mod"][m % len(info["mod"])], info["fib"][p % len(info["fib"])]
+
+
+def busy_fibers(node_id, cable_id):
+    rows = q("""SELECT fiber_a AS f FROM splices WHERE node_id=? AND cable_a=?
+                UNION SELECT fiber_b FROM splices WHERE node_id=? AND cable_b=?""",
+             (node_id, cable_id, node_id, cable_id))
+    return {r["f"] for r in rows}
+
+
+# ------------------------------------------------------- вкладка: раскладки
+
+class SchemesTab(ttk.Frame):
+    def __init__(self, master):
+        super().__init__(master, padding=8)
+        self.tree = ttk.Treeview(self, columns=("name", "n", "colors"), show="headings", height=14)
+        for c, t, w in (("name", "Раскладка", 220), ("n", "Волокон", 70), ("colors", "Цвета", 700)):
+            self.tree.heading(c, text=t); self.tree.column(c, width=w)
+        self.tree.grid(row=0, column=0, columnspan=4, sticky="nsew")
+        self.tree.bind("<>", self.on_select)
+
+        ttk.Label(self, text="Название:").grid(row=1, column=0, sticky="w", pady=4)
+        self.e_name = ttk.Entry(self, width=30); self.e_name.grid(row=1, column=1, sticky="w")
+        ttk.Label(self, text="Цвета через запятую:").grid(row=2, column=0, sticky="w")
+        self.e_colors = ttk.Entry(self, width=90); self.e_colors.grid(row=2, column=1, columnspan=3, sticky="we")
+
+        box = ttk.Frame(self); box.grid(row=3, column=0, columnspan=4, sticky="w", pady=6)
+        ttk.Button(box, text="Добавить", command=self.add).pack(side="left", padx=3)
+        ttk.Button(box, text="Сохранить", command=self.save).pack(side="left", padx=3)
+        ttk.Button(box, text="Удалить", command=self.delete).pack(side="left", padx=3)
+        ttk.Label(self, text="Известные цвета: " + ", ".join(COLOR_HEX),
+                  foreground="#666", wraplength=900).grid(row=4, column=0, columnspan=4, sticky="w")
+        self.columnconfigure(3, weight=1); self.rowconfigure(0, weight=1)
+        self.refresh()
+
+    def refresh(self):
+        self.tree.delete(*self.tree.get_children())
+        for r in q("SELECT * FROM schemes ORDER BY name"):
+            cols = r["colors"].split(",")
+            self.tree.insert("", "end", iid=r["id"], values=(r["name"], len(cols), r["colors"]))
+
+    def on_select(self, _=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        v = self.tree.item(sel[0], "values")
+        self.e_name.delete(0, "end"); self.e_name.insert(0, v[0])
+        self.e_colors.delete(0, "end"); self.e_colors.insert(0, v[2])
+
+    def add(self):
+        name, colors = self.e_name.get().strip(), self.e_colors.get().strip()
+        if not name or not colors:
+            return messagebox.showwarning("Данные", "Заполните название и цвета")
+        try:
+            x("INSERT INTO schemes(name,colors) VALUES(?,?)", (name, colors))
+        except sqlite3.IntegrityError:
+            return messagebox.showerror("Ошибка", "Такая раскладка уже есть")
+        self.refresh()
+
+    def save(self):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        x("UPDATE schemes SET name=?, colors=? WHERE id=?",
+          (self.e_name.get().strip(), self.e_colors.get().strip(), sel[0]))
+        self.refresh()
+
+    def delete(self):
+        sel = self.tree.selection()
+        if sel and messagebox.askyesno("Удаление", "Удалить раскладку?"):
+            try:
+                x("DELETE FROM schemes WHERE id=?", (sel[0],))
+            except sqlite3.IntegrityError:
+                return messagebox.showerror("Ошибка", "Раскладка используется типом кабеля")
+            self.refresh()
+
+
+# --------------------------------------------------- вкладка: типы кабелей
+
+class TypesTab(ttk.Frame):
+    def __init__(self, master):
+        super().__init__(master, padding=8)
+        self.tree = ttk.Treeview(self, columns=("name", "m", "f", "t", "ms", "fs"),
+                                 show="headings", height=14)
+        for c, t, w in (("name", "Тип кабеля", 240), ("m", "Модулей", 80), ("f", "Волокон в модуле", 130),
+                        ("t", "Всего волокон", 110), ("ms", "Раскладка модулей", 200),
+                        ("fs", "Раскладка волокон", 200)):
+            self.tree.heading(c, text=t); self.tree.column(c, width=w)
+        self.tree.grid(row=0, column=0, columnspan=6, sticky="nsew")
+        self.tree.bind("<>", self.on_select)
+
+        f = ttk.Frame(self); f.grid(row=1, column=0, columnspan=6, sticky="w", pady=6)
+        ttk.Label(f, text="Название:").grid(row=0, column=0, sticky="w")
+        self.e_name = ttk.Entry(f, width=28); self.e_name.grid(row=0, column=1, padx=4)
+        ttk.Label(f, text="Модулей:").grid(row=0, column=2)
+        self.e_mod = ttk.Spinbox(f, from_=1, to=144, width=6); self.e_mod.grid(row=0, column=3, padx=4)
+        ttk.Label(f, text="Волокон в модуле:").grid(row=0, column=4)
+        self.e_fib = ttk.Spinbox(f, from_=1, to=48, width=6); self.e_fib.grid(row=0, column=5, padx=4)
+        ttk.Label(f, text="Раскладка модулей:").grid(row=1, column=0, sticky="w", pady=4)
+        self.cb_ms = ttk.Combobox(f, width=26, state="readonly"); self.cb_ms.grid(row=1, column=1, padx=4)
+        ttk.Label(f, text="Раскладка волокон:").grid(row=1, column=2, columnspan=2)
+        self.cb_fs = ttk.Combobox(f, width=26, state="readonly"); self.cb_fs.grid(row=1, column=4, columnspan=2)
+
+        box = ttk.Frame(self); box.grid(row=2, column=0, columnspan=6, sticky="w")
+        ttk.Button(box, text="Добавить", command=self.add).pack(side="left", padx=3)
+        ttk.Button(box, text="Сохранить", command=self.save).pack(side="left", padx=3)
+        ttk.Button(box, text="Удалить", command=self.delete).pack(side="left", padx=3)
+        ttk.Button(box, text="Показать раскладку волокон", command=self.show_layout).pack(side="left", padx=12)
+        self.columnconfigure(5, weight=1); self.rowconfigure(0, weight=1)
+        self.refresh()
+
+    def refresh(self):
+        self.schemes = {r["name"]: r["id"] for r in q("SELECT id,name FROM schemes ORDER BY name")}
+        names = list(self.schemes)
+        self.cb_ms["values"] = names; self.cb_fs["values"] = names
+        self.tree.delete(*self.tree.get_children())
+        for r in q("""SELECT t.*, sm.name AS msn, sf.name AS fsn FROM cable_types t
+                      LEFT JOIN schemes sm ON sm.id=t.mod_scheme
+                      LEFT JOIN schemes sf ON sf.id=t.fib_scheme ORDER BY t.name"""):
+            self.tree.insert("", "end", iid=r["id"], values=(
+                r["name"], r["modules"], r["fibers"], r["modules"] * r["fibers"], r["msn"], r["fsn"]))
+
+    def on_select(self, _=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        v = self.tree.item(sel[0], "values")
+        self.e_name.delete(0, "end"); self.e_name.insert(0, v[0])
+        self.e_mod.delete(0, "end"); self.e_mod.insert(0, v[1])
+        self.e_fib.delete(0, "end"); self.e_fib.insert(0, v[2])
+        self.cb_ms.set(v[4] or ""); self.cb_fs.set(v[5] or "")
+
+    def _form(self):
+        try:
+            return (self.e_name.get().strip(), int(self.e_mod.get()), int(self.e_fib.get()),
+                    self.schemes.get(self.cb_ms.get()), self.schemes.get(self.cb_fs.get()))
+        except ValueError:
+            messagebox.showwarning("Данные", "Проверьте числовые поля"); return None
+
+    def add(self):
+        d = self._form()
+        if not d or not d[0]:
+            return
+        try:
+            x("""INSERT INTO cable_types(name,modules,fibers,mod_scheme,fib_scheme)
+                 VALUES(?,?,?,?,?)""", d)
+        except sqlite3.IntegrityError:
+            return messagebox.showerror("Ошибка", "Такой тип уже существует")
+        self.refresh()
+
+    def save(self):
+        sel = self.tree.selection(); d = self._form()
+        if sel and d:
+            x("""UPDATE cable_types SET name=?,modules=?,fibers=?,mod_scheme=?,fib_scheme=?
+                 WHERE id=?""", (*d, sel[0]))
+            self.refresh()
+
+    def delete(self):
+        sel = self.tree.selection()
+        if sel and messagebox.askyesno("Удаление", "Удалить тип кабеля?"):
+            try:
+                x("DELETE FROM cable_types WHERE id=?", (sel[0],))
+            except sqlite3.IntegrityError:
+                return messagebox.showerror("Ошибка", "Тип используется в кабелях")
+            self.refresh()
+
+    def show_layout(self):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        info = type_info(sel[0])
+        w = tk.Toplevel(self); w.title("Раскладка: " + info["name"]); w.geometry("520x600")
+        tv = ttk.Treeview(w, columns=("n", "m", "mc", "p", "fc"), show="headings")
+        for c, t, wd in (("n", "№ волокна", 80), ("m", "Модуль", 70), ("mc", "Цвет модуля", 130),
+                         ("p", "№ в модуле", 90), ("fc", "Цвет волокна", 130)):
+            tv.heading(c, text=t); tv.column(c, width=wd)
+        tv.pack(fill="both", expand=True)
+        for name, hexv in COLOR_HEX.items():
+            tv.tag_configure(name, background=hexv,
+                             foreground="#fff" if name in ("Чёрный", "Коричневый", "Синий", "Фиолетовый") else "#000")
+        for n in range(1, info["total"] + 1):
+            m, p, mc, fc = fiber_label(info, n)
+            tv.insert("", "end", values=(n, m, mc, p, fc), tags=(fc,))
+
+
+# ------------------------------------------------------- вкладка: объекты
+
+class NodesTab(ttk.Frame):
+    KINDS = ["Муфта", "Кросс (ODF)", "ОРШ", "АТС/Узел", "Абонентский бокс"]
+
+    def __init__(self, master):
+        super().__init__(master, padding=8)
+        self.tree = ttk.Treeview(self, columns=("name", "kind", "addr", "note"), show="headings", height=16)
+        for c, t, w in (("name", "Название", 220), ("kind", "Тип", 140),
+                        ("addr", "Адрес / привязка", 320), ("note", "Примечание", 320)):
+            self.tree.heading(c, text=t); self.tree.column(c, width=w)
+        self.tree.grid(row=0, column=0, columnspan=8, sticky="nsew")
+        self.tree.bind("<>", self.on_select)
+
+        f = ttk.Frame(self); f.grid(row=1, column=0, columnspan=8, sticky="w", pady=6)
+        ttk.Label(f, text="Название:").grid(row=0, column=0)
+        self.e_name = ttk.Entry(f, width=24); self.e_name.grid(row=0, column=1, padx=4)
+        ttk.Label(f, text="Тип:").grid(row=0, column=2)
+        self.cb_kind = ttk.Combobox(f, values=self.KINDS, width=18, state="readonly")
+        self.cb_kind.grid(row=0, column=3, padx=4); self.cb_kind.current(0)
+        ttk.Label(f, text="Адрес:").grid(row=0, column=4)
+        self.e_addr = ttk.Entry(f, width=34); self.e_addr.grid(row=0, column=5, padx=4)
+        ttk.Label(f, text="Примечание:").grid(row=0, column=6)
+        self.e_note = ttk.Entry(f, width=30); self.e_note.grid(row=0, column=7, padx=4)
+
+        box = ttk.Frame(self); box.grid(row=2, column=0, columnspan=8, sticky="w")
+        ttk.Button(box, text="Добавить", command=self.add).pack(side="left", padx=3)
+        ttk.Button(box, text="Сохранить", command=self.save).pack(side="left", padx=3)
+        ttk.Button(box, text="Удалить", command=self.delete).pack(side="left", padx=3)
+        self.columnconfigure(7, weight=1); self.rowconfigure(0, weight=1)
+        self.refresh()
+
+    def refresh(self):
+        self.tree.delete(*self.tree.get_children())
+        for r in q("SELECT * FROM nodes ORDER BY name"):
+            self.tree.insert("", "end", iid=r["id"],
+                             values=(r["name"], r["kind"] or "", r["address"] or "", r["note"] or ""))
+
+    def on_select(self, _=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        v = self.tree.item(sel[0], "values")
+        for e, val in ((self.e_name, v[0]), (self.e_addr, v[2]), (self.e_note, v[3])):
+            e.delete(0, "end"); e.insert(0, val)
+        self.cb_kind.set(v[1] or self.KINDS[0])
+
+    def add(self):
+        if not self.e_name.get().strip():
+            return
+        try:
+            x("INSERT INTO nodes(name,kind,address,note) VALUES(?,?,?,?)",
+              (self.e_name.get().strip(), self.cb_kind.get(), self.e_addr.get(), self.e_note.get()))
+        except sqlite3.IntegrityError:
+            return messagebox.showerror("Ошибка", "Объект с таким названием уже есть")
+        self.refresh()
+
+    def save(self):
+        sel = self.tree.selection()
+        if sel:
+            x("UPDATE nodes SET name=?,kind=?,address=?,note=? WHERE id=?",
+              (self.e_name.get().strip(), self.cb_kind.get(), self.e_addr.get(), self.e_note.get(), sel[0]))
+            self.refresh()
+
+    def delete(self):
+        sel = self.tree.selection()
+        if sel and messagebox.askyesno("Удаление", "Удалить объект вместе со сварками?"):
+            x("DELETE FROM nodes WHERE id=?", (sel[0],))
+            self.refresh()
+
+
+# -------------------------------------------------------- вкладка: кабели
+
+class CablesTab(ttk.Frame):
+    def __init__(self, master):
+        super().__init__(master, padding=8)
+        self.tree = ttk.Treeview(self, columns=("name", "type", "a", "b", "len", "note"),
+                                 show="headings", height=16)
+        for c, t, w in (("name", "Кабель", 200), ("type", "Тип", 190), ("a", "Объект A", 170),
+                        ("b", "Объект B", 170), ("len", "Длина, м", 90), ("note", "Примечание", 260)):
+            self.tree.heading(c, text=t); self.tree.column(c, width=w)
+        self.tree.grid(row=0, column=0, columnspan=8, sticky="nsew")
+        self.tree.bind("<>", self.on_select)
+
+        f = ttk.Frame(self); f.grid(row=1, column=0, columnspan=8, sticky="w", pady=6)
+        ttk.Label(f, text="Название:").grid(row=0, column=0)
+        self.e_name = ttk.Entry(f, width=22); self.e_name.grid(row=0, column=1, padx=4)
+        ttk.Label(f, text="Тип:").grid(row=0, column=2)
+        self.cb_type = ttk.Combobox(f, width=24, state="readonly"); self.cb_type.grid(row=0, column=3, padx=4)
+        ttk.Label(f, text="Длина, м:").grid(row=0, column=4)
+        self.e_len = ttk.Entry(f, width=10); self.e_len.grid(row=0, column=5, padx=4)
+        ttk.Label(f, text="Объект A:").grid(row=1, column=0, pady=4)
+        self.cb_a = ttk.Combobox(f, width=22, state="readonly"); self.cb_a.grid(row=1, column=1, padx=4)
+        ttk.Label(f, text="Объект B:").grid(row=1, column=2)
+        self.cb_b = ttk.Combobox(f, width=22, state="readonly"); self.cb_b.grid(row=1, column=3, padx=4)
+        ttk.Label(f, text="Примечание:").grid(row=1, column=4)
+        self.e_note = ttk.Entry(f, width=30); self.e_note.grid(row=1, column=5, padx=4)
+
+        box = ttk.Frame(self); box.grid(row=2, column=0, columnspan=8, sticky="w")
+        ttk.Button(box, text="Добавить", command=self.add).pack(side="left", padx=3)
+        ttk.Button(box, text="Сохранить", command=self.save).pack(side="left", padx=3)
+        ttk.Button(box, text="Удалить", command=self.delete).pack(side="left", padx=3)
+        self.columnconfigure(7, weight=1); self.rowconfigure(0, weight=1)
+        self.refresh()
+
+    def refresh(self):
+        self.types = {r["name"]: r["id"] for r in q("SELECT id,name FROM cable_types ORDER BY name")}
+        self.nodes = {r["name"]: r["id"] for r in q("SELECT id,name FROM nodes ORDER BY name")}
+        self.cb_type["values"] = list(self.types)
+        self.cb_a["values"] = [""] + list(self.nodes)
+        self.cb_b["values"] = [""] + list(self.nodes)
+        self.tree.delete(*self.tree.get_children())
+        for r in q("""SELECT c.*, t.name AS tn, na.name AS an, nb.name AS bn FROM cables c
+                      LEFT JOIN cable_types t ON t.id=c.type_id
+                      LEFT JOIN nodes na ON na.id=c.node_a
+                      LEFT JOIN nodes nb ON nb.id=c.node_b ORDER BY c.name"""):
+            self.tree.insert("", "end", iid=r["id"], values=(
+                r["name"], r["tn"] or "", r["an"] or "", r["bn"] or "",
+                r["length"] or "", r["note"] or ""))
+
+    def on_select(self, _=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        v = self.tree.item(sel[0], "values")
+        for e, val in ((self.e_name, v[0]), (self.e_len, v[4]), (self.e_note, v[5])):
+            e.delete(0, "end"); e.insert(0, val)
+        self.cb_type.set(v[1]); self.cb_a.set(v[2]); self.cb_b.set(v[3])
+
+    def _form(self):
+        try:
+            length = float(self.e_len.get().replace(",", ".")) if self.e_len.get().strip() else None
+        except ValueError:
+            messagebox.showwarning("Данные", "Длина должна быть числом"); return None
+        return (self.e_name.get().strip(), self.types.get(self.cb_type.get()),
+                self.nodes.get(self.cb_a.get()), self.nodes.get(self.cb_b.get()),
+                length, self.e_note.get())
+
+    def add(self):
+        d = self._form()
+        if not d or not d[0] or not d[1]:
+            return messagebox.showwarning("Данные", "Укажите название и тип кабеля")
+        try:
+            x("INSERT INTO cables(name,type_id,node_a,node_b,length,note) VALUES(?,?,?,?,?,?)", d)
+        except sqlite3.IntegrityError:
+            return messagebox.showerror("Ошибка", "Кабель с таким названием уже есть")
+        self.refresh()
+
+    def save(self):
+        sel = self.tree.selection(); d = self._form()
+        if sel and d:
+            x("""UPDATE cables SET name=?,type_id=?,node_a=?,node_b=?,length=?,note=?
+                 WHERE id=?""", (*d, sel[0]))
+            self.refresh()
+
+    def delete(self):
+        sel = self.tree.selection()
+        if sel and messagebox.askyesno("Удаление", "Удалить кабель и его сварки?"):
+            x("DELETE FROM cables WHERE id=?", (sel[0],))
+            self.refresh()
+
+
+# ------------------------------------------------- диалог параметров сварки
+
+class SpliceDialog(tk.Toplevel):
+    def __init__(self, master, data=None):
+        super().__init__(master)
+        self.title("Параметры сварки"); self.resizable(False, False); self.result = None
+        d = data or {}
+        rows = [("Тип соединения", "kind", d.get("kind", "Сварка")),
+                ("Затухание, дБ", "loss", d.get("loss", "")),
+                ("Дата", "sdate", d.get("sdate", datetime.date.today().isoformat())),
+                ("Исполнитель", "tech", d.get("tech", "")),
+                ("Примечание", "note", d.get("note", ""))]
+        self.w = {}
+        for i, (label, key, val) in enumerate(rows):
+            ttk.Label(self, text=label + ":").grid(row=i, column=0, sticky="w", padx=8, pady=3)
+            if key == "kind":
+                e = ttk.Combobox(self, values=["Сварка", "Механическое", "Коннектор", "Транзит"],
+                                 width=22, state="readonly")
+                e.set(val or "Сварка")
+            else:
+                e = ttk.Entry(self, width=25); e.insert(0, "" if val is None else str(val))
+            e.grid(row=i, column=1, padx=8, pady=3); self.w[key] = e
+        box = ttk.Frame(self); box.grid(row=len(rows), column=0, columnspan=2, pady=8)
+        ttk.Button(box, text="OK", command=self.ok).pack(side="left", padx=5)
+        ttk.Button(box, text="Отмена", command=self.destroy).pack(side="left", padx=5)
+        self.transient(master); self.grab_set(); self.wait_window(self)
+
+    def ok(self):
+        loss = self.w["loss"].get().replace(",", ".").strip()
+        try:
+            loss = float(loss) if loss else None
+        except ValueError:
+            return messagebox.showwarning("Данные", "Затухание должно быть числом", parent=self)
+        self.result = {"kind": self.w["kind"].get(), "loss": loss, "sdate": self.w["sdate"].get(),
+                       "tech": self.w["tech"].get(), "note": self.w["note"].get()}
+        self.destroy()
+
+
+# ------------------------------------------------------- вкладка: разварки
+
+class SpliceTab(ttk.Frame):
+    def __init__(self, master):
+        super().__init__(master, padding=8)
+        top = ttk.Frame(self); top.pack(fill="x")
+        ttk.Label(top, text="Объект:").pack(side="left")
+        self.cb_node = ttk.Combobox(top, width=30, state="readonly"); self.cb_node.pack(side="left", padx=6)
+        self.cb_node.bind("<>", lambda e: self.on_node())
+        ttk.Button(top, text="Обновить", command=self.refresh).pack(side="left", padx=4)
+        ttk.Button(top, text="Экспорт в CSV", command=self.export).pack(side="right", padx=4)
+
+        mid = ttk.Frame(self); mid.pack(fill="both", expand=True, pady=8)
+
+        self.fa = self._fiber_panel(mid, "Кабель A", 0)
+        center = ttk.Frame(mid); center.grid(row=0, column=1, padx=10, sticky="n")
+        ttk.Button(center, text="Сварить  →", command=self.splice_selected).pack(pady=4, fill="x")
+        ttk.Button(center, text="Сварить 1:1", command=self.splice_all).pack(pady=4, fill="x")
+        ttk.Button(center, text="Изменить", command=self.edit).pack(pady=12, fill="x")
+        ttk.Button(center, text="Удалить", command=self.delete).pack(pady=4, fill="x")
+        self.fb = self._fiber_panel(mid, "Кабель B", 2)
+        mid.columnconfigure(0, weight=1); mid.columnconfigure(2, weight=1); mid.rowconfigure(0, weight=1)
+
+        bottom = ttk.Panedwindow(self, orient="horizontal"); bottom.pack(fill="both", expand=True)
+        lf = ttk.Labelframe(bottom, text="Схема разварки объекта")
+        self.tree = ttk.Treeview(lf, columns=("ca", "fa", "cb", "fb", "kind", "loss", "d", "t"),
+                                 show="headings", height=10)
+        heads = (("ca", "Кабель A", 130), ("fa", "Волокно A", 160), ("cb", "Кабель B", 130),
+                 ("fb", "Волокно B", 160), ("kind", "Тип", 90), ("loss", "дБ", 60),
+                 ("d", "Дата", 90), ("t", "Исполнитель", 110))
+        for c, t, w in heads:
+            self.tree.heading(c, text=t); self.tree.column(c, width=w)
+        self.tree.pack(fill="both", expand=True)
+        self.tree.bind("", lambda e: self.edit())
+        bottom.add(lf, weight=3)
+
+        gf = ttk.Labelframe(bottom, text="Визуализация")
+        self.canvas = tk.Canvas(gf, bg="white", width=360)
+        self.canvas.pack(fill="both", expand=True)
+        bottom.add(gf, weight=2)
+
+        self.refresh()
+
+    def _fiber_panel(self, parent, title, col):
+        lf = ttk.Labelframe(parent, text=title)
+        lf.grid(row=0, column=col, sticky="nsew")
+        cb = ttk.Combobox(lf, state="readonly"); cb.pack(fill="x", padx=4, pady=4)
+        tv = ttk.Treeview(lf, columns=("n", "m", "fc", "st"), show="headings",
+                          selectmode="extended", height=12)
+        for c, t, w in (("n", "№", 50), ("m", "Модуль", 110), ("fc", "Волокно", 110), ("st", "Статус", 150)):
+            tv.heading(c, text=t); tv.column(c, width=w)
+        tv.pack(fill="both", expand=True, padx=4, pady=4)
+        for name, hexv in COLOR_HEX.items():
+            tv.tag_configure(name, background=hexv,
+                             foreground="#fff" if name in ("Чёрный", "Коричневый", "Синий", "Фиолетовый") else "#000")
+        panel = {"cb": cb, "tv": tv}
+        cb.bind("<>", lambda e: self.fill_fibers(panel))
+        return panel
+
+    # --- данные
+    def refresh(self):
+        self.nodes = {r["name"]: r["id"] for r in q("SELECT id,name FROM nodes ORDER BY name")}
+        cur = self.cb_node.get()
+        self.cb_node["values"] = list(self.nodes)
+        if cur in self.nodes:
+            self.cb_node.set(cur)
+        elif self.nodes:
+            self.cb_node.current(0)
+        self.on_node()
+
+    def node_id(self):
+        return self.nodes.get(self.cb_node.get())
+
+    def on_node(self):
+        nid = self.node_id()
+        rows = q("""SELECT id,name FROM cables WHERE node_a=? OR node_b=? ORDER BY name""", (nid, nid)) if nid else []
+        self.cables = {r["name"]: r["id"] for r in rows}
+        for p in (self.fa, self.fb):
+            p["cb"]["values"] = list(self.cables)
+            p["cb"].set("")
+            p["tv"].delete(*p["tv"].get_children())
+        self.load_splices()
+
+    def fill_fibers(self, panel):
+        tv = panel["tv"]; tv.delete(*tv.get_children())
+        cid = self.cables.get(panel["cb"].get())
+        nid = self.node_id()
+        if not cid or not nid:
+            return
+        info = type_info(cable_type_id(cid))
+        if not info:
+            return
+        busy = {}
+        for r in q("""SELECT * FROM splices WHERE node_id=? AND (cable_a=? OR cable_b=?)""", (nid, cid, cid)):
+            if r["cable_a"] == cid:
+                other, of = r["cable_b"], r["fiber_b"]
+                busy[r["fiber_a"]] = (other, of)
+            if r["cable_b"] == cid:
+                busy[r["fiber_b"]] = (r["cable_a"], r["fiber_a"])
+        names = {v: k for k, v in self.cables.items()}
+        for n in range(1, info["total"] + 1):
+            m, p, mc, fc = fiber_label(info, n)
+            if n in busy:
+                oc, of = busy[n]
+                st = f"→ {names.get(oc, '?')} / в.{of}"
+            else:
+                st = "свободно"
+            tv.insert("", "end", iid=str(n), values=(n, f"{m} ({mc})", f"{p} ({fc})", st), tags=(fc,))
+
+    def load_splices(self):
+        self.tree.delete(*self.tree.get_children())
+        nid = self.node_id()
+        if not nid:
+            self.draw(); return
+        rows = q("""SELECT s.*, ca.name AS can, cb.name AS cbn FROM splices s
+                    LEFT JOIN cables ca ON ca.id=s.cable_a
+                    LEFT JOIN cables cb ON cb.id=s.cable_b
+                    WHERE s.node_id=? ORDER BY ca.name, s.fiber_a""", (nid,))
+        self.rows = rows
+        for r in rows:
+            ia, ib = type_info(cable_type_id(r["cable_a"])), type_info(cable_type_id(r["cable_b"]))
+            la = "%d (%s/%s)" % (r["fiber_a"], *fiber_label(ia, r["fiber_a"])[2:]) if ia else r["fiber_a"]
+            lb = "%d (%s/%s)" % (r["fiber_b"], *fiber_label(ib, r["fiber_b"])[2:]) if ib else r["fiber_b"]
+            self.tree.insert("", "end", iid=r["id"], values=(
+                r["can"], la, r["cbn"], lb, r["kind"] or "", r["loss"] if r["loss"] is not None else "",
+                r["sdate"] or "", r["tech"] or ""))
+        self.draw()
+
+    # --- действия
+    def splice_selected(self):
+        nid = self.node_id()
+        ca, cb = self.cables.get(self.fa["cb"].get()), self.cables.get(self.fb["cb"].get())
+        if not (nid and ca and cb):
+            return messagebox.showwarning("Выбор", "Выберите объект и оба кабеля")
+        sa = sorted(int(i) for i in self.fa["tv"].selection())
+        sb = sorted(int(i) for i in self.fb["tv"].selection())
+        if not sa or len(sa) != len(sb):
+            return messagebox.showwarning("Выбор", "Выделите одинаковое количество волокон слева и справа")
+        if ca == cb and set(sa) & set(sb):
+            return messagebox.showwarning("Выбор", "Нельзя сварить волокно само с собой")
+        dlg = SpliceDialog(self)
+        if not dlg.result:
+            return
+        p, busy_a, busy_b = dlg.result, busy_fibers(nid, ca), busy_fibers(nid, cb)
+        skipped = 0
+        for f1, f2 in zip(sa, sb):
+            if f1 in busy_a or f2 in busy_b:
+                skipped += 1; continue
+            x("""INSERT INTO splices(node_id,cable_a,fiber_a,cable_b,fiber_b,kind,loss,sdate,tech,note)
+                 VALUES(?,?,?,?,?,?,?,?,?,?)""",
+              (nid, ca, f1, cb, f2, p["kind"], p["loss"], p["sdate"], p["tech"], p["note"]))
+            busy_a.add(f1); busy_b.add(f2)
+        if skipped:
+            messagebox.showinfo("Готово", f"Пропущено занятых волокон: {skipped}")
+        self.after_change()
+
+    def splice_all(self):
+        nid = self.node_id()
+        ca, cb = self.cables.get(self.fa["cb"].get()), self.cables.get(self.fb["cb"].get())
+        if not (nid and ca and cb) or ca == cb:
+            return messagebox.showwarning("Выбор", "Выберите два разных кабеля")
+        ia, ib = type_info(cable_type_id(ca)), type_info(cable_type_id(cb))
+        dlg = SpliceDialog(self)
+        if not dlg.result:
+            return
+        p, busy_a, busy_b = dlg.result, busy_fibers(nid, ca), busy_fibers(nid, cb)
+        for n in range(1, min(ia["total"], ib["total"]) + 1):
+            if n in busy_a or n in busy_b:
+                continue
+            x("""INSERT INTO splices(node_id,cable_a,fiber_a,cable_b,fiber_b,kind,loss,sdate,tech,note)
+                 VALU
