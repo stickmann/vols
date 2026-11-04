@@ -14,6 +14,10 @@ infra/
   postgres/   init-скрипт docker: роль приложения vols_app
 ```
 
+## Развёртывание на сервере
+
+См. [deploy/README.md](deploy/README.md). Коротко: на сервере с Ubuntu запустите `./deploy/install.sh ваш-домен`.
+
 ## Быстрый старт
 
 Нужны Node.js 22+, pnpm 10 и Docker.

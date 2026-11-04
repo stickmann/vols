@@ -3,7 +3,10 @@ import { createDb } from "./db/client.js";
 import { env } from "./env.js";
 
 const { db, close } = createDb(env.DATABASE_URL);
-const app = buildApp({ db, devTenantHeader: process.env.NODE_ENV !== "production", logger: true });
+const app = buildApp({ db, devTenantHeader: env.ALLOW_TENANT_HEADER, logger: true });
+if (env.ALLOW_TENANT_HEADER && process.env.NODE_ENV === "production") {
+  app.log.warn("ALLOW_TENANT_HEADER=true: оператор берётся из заголовка без входа. Только для просмотра за паролем веб-сервера.");
+}
 
 const shutdown = async () => {
   await app.close();

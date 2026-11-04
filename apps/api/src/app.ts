@@ -29,7 +29,7 @@ declare module "fastify" {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function buildApp(opts: AppOptions) {
-  const app = Fastify({ logger: opts.logger ?? false });
+  const app = Fastify({ logger: opts.logger ?? false, trustProxy: true });
   app.decorate("db", opts.db);
   app.decorate("requireContext", (req: FastifyRequest): RequestContext => {
     const tenantId = req.headers["x-tenant-id"];
