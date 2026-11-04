@@ -6,7 +6,7 @@ import { Button, Dialog, Field, Input, cx } from "../components/ui/index.js";
 import { getTenantId, setTenantId } from "../lib/tenant.js";
 
 const nav = [
-  { to: "/map", label: "Карта", soon: true },
+  { to: "/map", label: "Карта" },
   { section: "Справочники" },
   { to: "/catalog/cables", label: "Типы кабелей" },
 ] as const;
@@ -50,7 +50,6 @@ export function AppShell() {
                 }
               >
                 {item.label}
-                {"soon" in item && <span className="text-xs text-slate-400">скоро</span>}
               </NavLink>
             ),
           )}

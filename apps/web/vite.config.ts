@@ -4,6 +4,8 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // Переменные VITE_* берутся из общего .env в корне репозитория.
+  envDir: "../..",
   server: {
     port: 5173,
     proxy: {

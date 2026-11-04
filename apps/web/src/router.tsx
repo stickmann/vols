@@ -2,14 +2,14 @@ import { createBrowserRouter, Navigate } from "react-router";
 import { CableTypeEditorPage } from "./features/cable-types/EditorPage.js";
 import { CableTypesListPage } from "./features/cable-types/ListPage.js";
 import { AppShell } from "./layout/AppShell.js";
-import { MapPlaceholder } from "./pages/MapPlaceholder.js";
 
 export const router = createBrowserRouter([
   {
     element: <AppShell />,
     children: [
-      { index: true, element: <Navigate to="/catalog/cables" replace /> },
-      { path: "map", element: <MapPlaceholder /> },
+      { index: true, element: <Navigate to="/map" replace /> },
+      // Карта (MapLibre ~1 МБ) грузится отдельным чанком, только когда её открыли.
+      { path: "map", lazy: async () => ({ Component: (await import("./features/map/MapPage.js")).MapPage }) },
       { path: "catalog/cables", element: <CableTypesListPage /> },
       { path: "catalog/cables/new", element: <CableTypeEditorPage /> },
       { path: "catalog/cables/:id", element: <CableTypeEditorPage /> },
