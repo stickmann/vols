@@ -1,0 +1,16 @@
+{
+  "name": "vols",
+  "private": true,
+  "packageManager": "pnpm@10.28.0",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev:api": "pnpm --filter @vols/api dev",
+    "dev:web": "pnpm --filter @vols/web dev",
+    "db:up": "docker compose up -d db",
+    "db:generate": "pnpm --filter @vols/api db:generate",
+    "db:migrate": "pnpm --filter @vols/api db:migrate",
+    "db:seed": "pnpm --filter @vols/api db:seed",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test"
+  }
+}

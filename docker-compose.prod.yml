@@ -1,0 +1,65 @@
+# Продакшен-стенд: PostgreSQL+PostGIS, API, веб с Caddy (HTTPS).
+# Запуск: ./deploy/install.sh [домен]  — см. deploy/README.md
+name: vols
+
+services:
+  db:
+    image: postgis/postgis:16-3.5
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: vols
+      POSTGRES_USER: vols
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?задайте в .env.prod}
+      VOLS_APP_PASSWORD: ${VOLS_APP_PASSWORD:?задайте в .env.prod}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vols -d vols"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    # Наружу база не публикуется.
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://vols_app:${VOLS_APP_PASSWORD}@db:5432/vols
+      MIGRATION_DATABASE_URL: postgres://vols:${POSTGRES_PASSWORD}@db:5432/vols
+      ALLOW_TENANT_HEADER: ${ALLOW_TENANT_HEADER:-false}
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_MAP_STYLE: ${VITE_MAP_STYLE:-}
+        VITE_SATELLITE_TILES: ${VITE_SATELLITE_TILES:-}
+        VITE_SATELLITE_ATTRIBUTION: ${VITE_SATELLITE_ATTRIBUTION:-}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER:?задайте в .env.prod}
+      BASIC_AUTH_HASH: ${BASIC_AUTH_HASH:?задайте в .env.prod}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  db-data:
+  caddy-data:
+  caddy-config:
