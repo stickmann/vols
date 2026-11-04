@@ -14,6 +14,7 @@ export const router = createBrowserRouter([
         path: "equipment/:id/splicing",
         lazy: async () => ({ Component: (await import("./features/splicing/SplicingPage.js")).SplicingPage }),
       },
+      { path: "documents", lazy: async () => ({ Component: (await import("./features/documents/DocumentsPage.js")).DocumentsPage }) },
       { path: "catalog/cables", element: <CableTypesListPage /> },
       { path: "catalog/cables/new", element: <CableTypeEditorPage /> },
       { path: "catalog/cables/:id", element: <CableTypeEditorPage /> },

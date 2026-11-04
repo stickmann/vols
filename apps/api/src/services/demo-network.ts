@@ -83,8 +83,23 @@ export async function createDemoNetwork(tx: Tx, tenantId: string) {
     return t!.id;
   };
 
-  const connect = (siteId: string, equipmentId: string, kind: "fusion" | "patch", a: string, b: string) =>
-    tx.insert(connections).values({ tenantId, siteId, equipmentId, kind, aTerminalId: a, bTerminalId: b });
+  const slots = new Map<string, number>();
+  const connect = (siteId: string, equipmentId: string, kind: "fusion" | "patch", a: string, b: string) => {
+    // Сварки раскладываем по кассете 1 подряд, как их записал бы монтажник.
+    const slot = kind === "fusion" ? (slots.get(equipmentId) ?? 0) + 1 : null;
+    if (slot) slots.set(equipmentId, slot);
+    return tx.insert(connections).values({
+      tenantId,
+      siteId,
+      equipmentId,
+      kind,
+      aTerminalId: a,
+      bTerminalId: b,
+      trayNo: slot ? 1 : null,
+      slotNo: slot,
+      lossDb: slot ? [0.02, 0.03, 0.04, 0.05][slot % 4] : null,
+    });
+  };
 
   // Координаты: условный квартал, улица с запада на восток.
   const pop = await site("pop", "Узел связи №1", [49.1080, 55.7960]);

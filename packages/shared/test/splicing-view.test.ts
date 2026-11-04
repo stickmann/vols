@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { SplicingData } from "./api.js";
-import { planPairs, sequences, stats, terminalIndex } from "./model.js";
+import { compressRanges, planPairs, sequences, splicingStats as stats, terminalIndex, type SplicingData } from "../src/index.js";
 
 const color = (name: string) => ({ name, hex: "#000000", marks: 0 });
 const fibers = (prefix: string, n: number) =>
@@ -68,4 +67,8 @@ describe("модель разварки", () => {
   it("считает сводку", () => {
     expect(stats(data)).toEqual({ splices: 1, patches: 0, through: 1, freeFibers: 9, totalFibers: 12 });
   });
+});
+
+describe("compressRanges", () => {
+  it("сворачивает номера в диапазоны", () => expect(compressRanges([3, 1, 2, 5, 7, 8, 9])).toBe("1–3, 5, 7–9"));
 });

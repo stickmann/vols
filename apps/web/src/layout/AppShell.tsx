@@ -7,6 +7,7 @@ import { getTenantId, setTenantId } from "../lib/tenant.js";
 
 const nav = [
   { to: "/map", label: "Карта" },
+  { to: "/documents", label: "Документы" },
   { section: "Справочники" },
   { to: "/catalog/cables", label: "Типы кабелей" },
 ] as const;

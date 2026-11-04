@@ -6,6 +6,7 @@ import { catalogRoutes } from "./routes/catalog.js";
 import { networkRoutes } from "./routes/network.js";
 import { splicingRoutes } from "./routes/splicing.js";
 import { traceRoutes } from "./routes/trace.js";
+import { documentRoutes } from "./routes/documents.js";
 
 export interface AppOptions {
   db: Db;
@@ -60,6 +61,7 @@ export function buildApp(opts: AppOptions) {
   app.register(networkRoutes, { prefix: "/api/v1" });
   app.register(splicingRoutes, { prefix: "/api/v1" });
   app.register(traceRoutes, { prefix: "/api/v1" });
+  app.register(documentRoutes, { prefix: "/api/v1" });
   return app;
 }
 

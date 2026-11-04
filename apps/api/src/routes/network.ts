@@ -70,6 +70,12 @@ export const networkRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // оборудование
+  app.get("/equipment", (req) =>
+    run(req, (tx) => {
+      const { kinds } = z.object({ kinds: z.string().optional() }).parse(req.query);
+      return net.listEquipment(tx, kinds?.split(",").filter(Boolean));
+    }),
+  );
   app.post("/equipment", async (req, reply) => {
     const v = equipmentInputSchema.parse(req.body);
     const eqId = await run(req, (tx, t) => net.createEquipment(tx, t, v));

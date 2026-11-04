@@ -399,6 +399,16 @@ export async function deleteCable(tx: Tx, id: string) {
 
 const CONTAINERS = new Set(["closure", "terminal_box", "odf"]);
 
+/** Список оборудования (например, всех корпусов для паспортов) с местом и числом сварок. */
+export async function listEquipment(tx: Tx, kinds?: string[]) {
+  return tx.execute(sql`
+    SELECT e.id, e.kind, e.name, e.status, m.name AS "modelName", s.id AS "siteId", s.name AS "siteName", s.kind AS "siteKind",
+           (SELECT count(*)::int FROM connections c WHERE c.equipment_id = e.id AND c.kind IN ('fusion', 'mechanical')) AS splices
+    FROM equipment e JOIN equipment_models m ON m.id = e.model_id JOIN sites s ON s.id = e.site_id
+    WHERE ${kinds?.length ? sql`e.kind::text IN (${sql.join(kinds.map((k) => sql`${k}`), sql`, `)})` : sql`true`}
+    ORDER BY s.name NULLS LAST, e.name NULLS LAST`);
+}
+
 export async function createEquipment(tx: Tx, tenantId: string, v: EquipmentInput) {
   const [m] = await tx.select({ kind: equipmentModels.kind }).from(equipmentModels).where(eq(equipmentModels.id, v.modelId));
   if (!m) throw new HttpError(422, "Модель оборудования не найдена");

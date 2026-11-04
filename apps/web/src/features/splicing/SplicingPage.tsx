@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { ColorChip } from "../../components/ColorChip.js";
+import { DownloadButton } from "../../components/DownloadButton.js";
 import { Alert, Badge, Button, Dialog, Field, Input, Select, cx } from "../../components/ui/index.js";
 import { EQUIPMENT_KIND_LABELS, SITE_KIND_LABELS } from "../map/style.js";
 import {
@@ -191,6 +192,9 @@ function Editor({ data }: { data: SplicingData }) {
         <Button onClick={() => setBatchOpen(true)} disabled={data.cables.length === 0}>
           Сварить по порядку…
         </Button>
+        <DownloadButton path={`/equipment/${eq.id}/passport.pdf`} filename="Паспорт.pdf">
+          Паспорт PDF
+        </DownloadButton>
         <Button variant="ghost" onClick={() => setShowTable((v) => !v)} aria-expanded={showTable}>
           {showTable ? "Скрыть таблицу" : "Таблица соединений"}
         </Button>
