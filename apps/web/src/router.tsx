@@ -10,6 +10,10 @@ export const router = createBrowserRouter([
       { index: true, element: <Navigate to="/map" replace /> },
       // Карта (MapLibre ~1 МБ) грузится отдельным чанком, только когда её открыли.
       { path: "map", lazy: async () => ({ Component: (await import("./features/map/MapPage.js")).MapPage }) },
+      {
+        path: "equipment/:id/splicing",
+        lazy: async () => ({ Component: (await import("./features/splicing/SplicingPage.js")).SplicingPage }),
+      },
       { path: "catalog/cables", element: <CableTypesListPage /> },
       { path: "catalog/cables/new", element: <CableTypeEditorPage /> },
       { path: "catalog/cables/:id", element: <CableTypeEditorPage /> },

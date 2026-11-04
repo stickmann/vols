@@ -1,6 +1,7 @@
 import type { LngLat } from "@vols/shared";
 import type { Feature, FeatureCollection, Geometry } from "geojson";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useSearchParams } from "react-router";
 import { useCableTypes } from "../../api/catalog.js";
 import { Alert, cx } from "../../components/ui/index.js";
 import { findPath, useCreateRoute, useCreateSite, useNetwork, useUpdateSite } from "./api.js";
@@ -37,7 +38,12 @@ export function MapPage() {
   }, []);
   // Клики обрабатываются строго по очереди: следующий видит результат предыдущего.
   const clickQueue = useRef<Promise<void>>(Promise.resolve());
-  const [selection, setSelection] = useState<Selection>(null);
+  // ?site=<id> — открыть карту с выбранным местом (например, при возврате из разварки).
+  const [search] = useSearchParams();
+  const [selection, setSelection] = useState<Selection>(() => {
+    const site = search.get("site");
+    return site ? { type: "site", id: site } : null;
+  });
   const [chooser, setChooser] = useState<{ x: number; y: number; items: Candidate[] } | null>(null);
   const [cursorAt, setCursorAt] = useState<LngLat | null>(null);
   const [message, setMessage] = useState<string | null>(null);

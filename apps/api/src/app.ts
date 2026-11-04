@@ -4,6 +4,7 @@ import type { Db, RequestContext } from "./db/client.js";
 import { HttpError } from "./errors.js";
 import { catalogRoutes } from "./routes/catalog.js";
 import { networkRoutes } from "./routes/network.js";
+import { splicingRoutes } from "./routes/splicing.js";
 
 export interface AppOptions {
   db: Db;
@@ -56,6 +57,7 @@ export function buildApp(opts: AppOptions) {
   app.get("/health", async () => ({ ok: true }));
   app.register(catalogRoutes, { prefix: "/api/v1" });
   app.register(networkRoutes, { prefix: "/api/v1" });
+  app.register(splicingRoutes, { prefix: "/api/v1" });
   return app;
 }
 

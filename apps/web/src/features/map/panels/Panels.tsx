@@ -1,5 +1,6 @@
 import { objectStatuses, routeKinds, siteKinds, type ObjectStatus } from "@vols/shared";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Link } from "react-router";
 import { Alert, Badge, Button, Field, Input, Select, Textarea } from "../../../components/ui/index.js";
 import {
   useCable,
@@ -226,6 +227,15 @@ function EquipmentSection({ site }: { site: SiteDetails }) {
             {e.ports ? ` · портов: ${e.ports}` : ""}
           </span>
         </span>
+        {["closure", "terminal_box", "odf"].includes(e.kind) && (
+          <Link
+            to={`/equipment/${e.id}/splicing`}
+            className="rounded px-2 py-0.5 text-xs font-medium text-brand-700 hover:bg-brand-50"
+            title="Открыть схему разварки"
+          >
+            Разварка
+          </Link>
+        )}
         <button
           className="rounded px-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
           title="Удалить оборудование"
