@@ -3,7 +3,7 @@ import { asc, eq, sql } from "drizzle-orm";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { withTenant } from "../db/client.js";
-import { cableTypeFibers, cableTypeModules, cableTypes, colorSchemes, equipmentModels } from "../db/schema/index.js";
+import { cableTypeFibers, cableTypeModules, cableTypes, cables, colorSchemes, equipmentModels } from "../db/schema/index.js";
 import { createCableType, getCableType, updateCableType } from "../services/cable-types.js";
 import { HttpError } from "../errors.js";
 
@@ -28,8 +28,16 @@ export const catalogRoutes: FastifyPluginAsync = async (app) => {
           name: cableTypes.name,
           construction: cableTypes.construction,
           fiberStandard: cableTypes.fiberStandard,
-          modulesCount: sql<number>`(SELECT count(*)::int FROM ${cableTypeModules} m WHERE m.cable_type_id = "cable_types"."id")`,
+          outerDiameterMm: cableTypes.outerDiameterMm,
           fiberCount: sql<number>`(SELECT count(*)::int FROM ${cableTypeFibers} f WHERE f.cable_type_id = "cable_types"."id")`,
+          /** Модули для превью: цвет и число волокон по порядку. */
+          modules: sql<{ name: string; hex: string; marks: number; fiberCount: number }[]>`(
+            SELECT coalesce(jsonb_agg(jsonb_build_object(
+              'name', m.color_name, 'hex', m.color_hex, 'marks', m.color_marks, 'fiberCount', m.fiber_count
+            ) ORDER BY m.module_no), '[]'::jsonb)
+            FROM ${cableTypeModules} m WHERE m.cable_type_id = "cable_types"."id")`,
+          inUse: sql<boolean>`EXISTS (SELECT 1 FROM ${cables} c WHERE c.cable_type_id = "cable_types"."id")`,
+          updatedAt: cableTypes.updatedAt,
         })
         .from(cableTypes)
         .orderBy(asc(cableTypes.name)),

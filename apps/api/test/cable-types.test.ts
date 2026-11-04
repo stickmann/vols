@@ -118,7 +118,9 @@ describe("API справочника кабелей", () => {
     const id = created.json().id as string;
 
     const list = await api.inject({ method: "GET", url: "/api/v1/cable-types", headers: headers() });
-    expect(list.json().find((t: { id: string }) => t.id === id)).toMatchObject({ modulesCount: 3, fiberCount: 5 });
+    const item = list.json().find((t: { id: string }) => t.id === id);
+    expect(item).toMatchObject({ fiberCount: 5, inUse: false });
+    expect(item.modules.map((m: { fiberCount: number }) => m.fiberCount)).toEqual([2, 0, 3]);
 
     const updated = await api.inject({
       method: "PUT",

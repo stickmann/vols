@@ -14,8 +14,8 @@ import { createCableType } from "./cable-types.js";
  * Работает под ролью приложения: id генерируется заранее, чтобы RLS
  * пропустил вставку в tenants.
  */
-export async function provisionTenant(db: Db, input: { name: string; slug: string }): Promise<string> {
-  const tenantId = randomUUID();
+export async function provisionTenant(db: Db, input: { name: string; slug: string; id?: string }): Promise<string> {
+  const tenantId = input.id ?? randomUUID();
   await withTenant(db, { tenantId }, async (tx) => {
     await tx.insert(tenants).values({ id: tenantId, name: input.name, slug: input.slug });
 

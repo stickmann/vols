@@ -7,7 +7,8 @@ import { PLC_SPLITTER_LOSS_DB } from "./optics.js";
  * Оператор потом может править их у себя.
  */
 
-const C = {
+/** Стандартная палитра цветов оптических модулей и волокон. */
+export const STANDARD_COLORS = {
   red: { name: "Красный", hex: "#e02b2b" },
   green: { name: "Зелёный", hex: "#17a81a" },
   blue: { name: "Синий", hex: "#1f6fd0" },
@@ -22,6 +23,10 @@ const C = {
   aqua: { name: "Бирюзовый", hex: "#30c7c7" },
   natural: { name: "Натуральный", hex: "#e8e0c8" },
 } satisfies Record<string, FiberColor>;
+const C = STANDARD_COLORS;
+
+/** Фиксированный id демо-оператора: создаётся сидом, веб в режиме разработки работает от него. */
+export const DEMO_TENANT_ID = "00000000-0000-4000-8000-00000000de00";
 
 export interface ColorSchemePreset {
   key: string;
