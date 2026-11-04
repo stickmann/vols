@@ -83,6 +83,7 @@ function useSpliceMutation<V, R>(equipmentId: string, fn: (v: V) => Promise<R>) 
       void qc.invalidateQueries({ queryKey: ["network"] });
       void qc.invalidateQueries({ queryKey: ["site"] });
       void qc.invalidateQueries({ queryKey: ["cable"] });
+      void qc.invalidateQueries({ queryKey: ["trace"] });
     },
   });
 }

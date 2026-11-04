@@ -39,7 +39,8 @@ export interface Network {
 
 export type SiteFeature = Feature<Point, SiteProps>;
 
-export type Selection = { type: "site" | "route" | "cable"; id: string } | null;
+/** Выбранный объект; trace — трасса от точки подключения (id = terminalId). */
+export type Selection = { type: "site" | "route" | "cable" | "trace"; id: string } | null;
 
 /** Режимы работы с картой. */
 export type Mode =
@@ -66,6 +67,7 @@ export interface SiteDetails {
     modelName: string;
     modelId: string;
     ports: number;
+    tracePorts: { terminalId: string; role: string; no: number; face: string | null; connected: boolean }[];
   }[];
   cables: { id: string; name: string | null; typeName: string; role: "end" | "pass" }[];
 }

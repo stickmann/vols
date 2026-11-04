@@ -1,4 +1,4 @@
-import type { CableInput, EquipmentInput, RouteInput, SiteInput } from "@vols/shared";
+import type { CableInput, EquipmentInput, RouteInput, SiteInput, TraceResult } from "@vols/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client.js";
 import type { CableDetails, Network, RouteDetails, SiteDetails } from "./types.js";
@@ -45,6 +45,7 @@ function useNetMutation<V, R>(fn: (v: V) => Promise<R>) {
       void qc.invalidateQueries({ queryKey: netKeys.network });
       void qc.invalidateQueries({ queryKey: ["site"] });
       void qc.invalidateQueries({ queryKey: ["route"] });
+      void qc.invalidateQueries({ queryKey: ["trace"] });
       void qc.invalidateQueries({ queryKey: ["cable"] });
       void qc.invalidateQueries({ queryKey: ["cable-types"] });
     },
@@ -74,3 +75,22 @@ export const useUpdateCable = () =>
       api<void>(`/cables/${id}`, { method: "PATCH", body: v }),
   );
 export const useDeleteCable = () => useNetMutation((id: string) => api<void>(`/cables/${id}`, { method: "DELETE" }));
+
+export const useTrace = (terminalId: string | null) =>
+  useQuery({
+    queryKey: ["trace", terminalId ?? ""],
+    queryFn: () => api<TraceResult>("/trace", { method: "POST", body: { terminalId } }),
+    enabled: !!terminalId,
+  });
+
+export interface LocateResult {
+  beyond: boolean;
+  totalM: number;
+  description: string;
+  position?: [number, number];
+  siteId?: string;
+  routeId?: string;
+}
+
+export const locateFault = (terminalId: string, leafTerminalId: string, distanceM: number) =>
+  api<LocateResult>("/trace/locate", { method: "POST", body: { terminalId, leafTerminalId, distanceM } });

@@ -170,7 +170,7 @@ export function SitePanel({ id, onClose, onSelect }: { id: string; onClose: () =
       )}
       <p className="text-xs text-slate-500">Чтобы переместить место, перетащите его на карте — трассы потянутся следом.</p>
 
-      <EquipmentSection site={s} />
+      <EquipmentSection site={s} onTrace={(terminalId) => onSelect({ type: "trace", id: terminalId })} />
 
       <Section title={`Кабели (${s.cables.length})`}>
         {s.cables.length === 0 ? (
@@ -197,7 +197,7 @@ export function SitePanel({ id, onClose, onSelect }: { id: string; onClose: () =
   );
 }
 
-function EquipmentSection({ site }: { site: SiteDetails }) {
+function EquipmentSection({ site, onTrace }: { site: SiteDetails; onTrace: (terminalId: string) => void }) {
   const models = useEquipmentModels();
   const create = useCreateEquipment();
   const del = useDeleteEquipment();
@@ -245,6 +245,24 @@ function EquipmentSection({ site }: { site: SiteDetails }) {
           ✕
         </button>
       </li>
+      {e.tracePorts.length > 0 && (
+        <li className="flex flex-wrap items-center gap-1 pb-2" style={{ paddingLeft: depth * 16 }}>
+          <span className="mr-1 text-xs text-slate-500">{e.kind === "olt" || e.kind === "onu" ? "Трасса от PON:" : "Трасса от порта:"}</span>
+          {e.tracePorts.map((p) => (
+            <button
+              key={p.terminalId}
+              onClick={() => onTrace(p.terminalId)}
+              title={p.connected ? "Построить трассу" : "Порт не подключён — трасса будет из одной точки"}
+              className={
+                "rounded border px-1.5 py-0.5 text-xs tabular-nums hover:border-brand-500 hover:text-brand-700 " +
+                (p.connected ? "border-slate-300 text-slate-700" : "border-dashed border-slate-200 text-slate-400")
+              }
+            >
+              {p.role === "pon" ? `PON ${p.no}` : p.no}
+            </button>
+          ))}
+        </li>
+      )}
       {children(e.id).map((c) => (
         <Row key={c.id} e={c} depth={depth + 1} />
       ))}

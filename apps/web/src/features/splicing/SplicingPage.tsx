@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useNavigate, useParams } from "react-router";
 import { ColorChip } from "../../components/ColorChip.js";
 import { Alert, Badge, Button, Dialog, Field, Input, Select, cx } from "../../components/ui/index.js";
 import { EQUIPMENT_KIND_LABELS, SITE_KIND_LABELS } from "../map/style.js";
@@ -199,6 +199,11 @@ function Editor({ data }: { data: SplicingData }) {
             ? `Выбрано: ${index.get(pending)?.label}. Кликните вторую точку, Esc — отмена.`
             : "Кликните свободное волокно или порт, затем второе — появится сварка. Клик по занятому покажет соединение."}
         </span>
+        {pending && (
+          <Link to={`/map?trace=${pending}`} className="text-sm font-medium text-brand-700 hover:underline">
+            Трассировать от выбранной точки
+          </Link>
+        )}
       </div>
 
       {(error || connect.error) && (
@@ -331,6 +336,7 @@ function ConnectionCard({
   onDelete: () => void;
 }) {
   const update = useUpdateConnection(equipmentId);
+  const navigate = useNavigate();
   const [kind, setKind] = useState(conn.kind);
   const [loss, setLoss] = useState(conn.lossDb?.toString() ?? "");
   const [tray, setTray] = useState(conn.trayNo?.toString() ?? "");
@@ -395,6 +401,9 @@ function ConnectionCard({
             </Button>
           </>
         )}
+        <Button onClick={() => navigate(`/map?trace=${conn.aTerminalId}`)} title="Показать трассу на карте и посчитать затухание">
+          Трассировать
+        </Button>
         <Button variant="danger" onClick={onDelete}>
           {isThrough ? "✂ Разрезать" : "Удалить"}
         </Button>

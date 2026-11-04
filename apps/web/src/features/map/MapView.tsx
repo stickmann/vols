@@ -49,6 +49,10 @@ export interface MapViewProps {
   cursor: string;
   /** Место, которое можно перетаскивать мышью/пальцем. */
   draggableSiteId: string | null;
+  /** Красная метка (например, место по рефлектометру). */
+  marker: LngLat | null;
+  /** Переместить карту к точке; меняйте объект, чтобы повторить. */
+  focus: { at: LngLat } | null;
   onClick: (hit: MapHit) => void;
   onHover: (hit: MapHit | null) => void;
   onSiteDragEnd: (siteId: string, to: LngLat) => void;
@@ -83,6 +87,7 @@ function addNetworkLayers(map: MlMap) {
   src("sites");
   src("highlight");
   src("draft");
+  src("marker");
 
   map.addLayer({
     id: "cables-halo",
@@ -168,6 +173,12 @@ function addNetworkLayers(map: MlMap) {
     paint: { "circle-radius": 13, "circle-color": "rgba(0,0,0,0)", "circle-stroke-color": SELECT_COLOR, "circle-stroke-width": 3 },
   });
   map.addLayer({
+    id: "marker",
+    type: "circle",
+    source: "marker",
+    paint: { "circle-radius": 9, "circle-color": "#dc2626", "circle-stroke-color": "#ffffff", "circle-stroke-width": 3 },
+  });
+  map.addLayer({
     id: "draft-points",
     type: "circle",
     source: "draft",
@@ -175,6 +186,9 @@ function addNetworkLayers(map: MlMap) {
     paint: { "circle-radius": 5, "circle-color": "#ffffff", "circle-stroke-color": SELECT_COLOR, "circle-stroke-width": 2.5 },
   });
 }
+
+const markerFc = (p: LngLat | null): FeatureCollection<Geometry> =>
+  p ? { type: "FeatureCollection", features: [{ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: p } }] } : EMPTY;
 
 function setData(map: MlMap, id: string, data: FeatureCollection<Geometry>) {
   (map.getSource(id) as GeoJSONSource | undefined)?.setData(data);
@@ -328,6 +342,7 @@ export function MapView(props: MapViewProps) {
     }
     setData(map, "highlight", p.highlight);
     setData(map, "draft", p.draft);
+    setData(map, "marker", markerFc(p.marker));
     map.setFilter("sites-selected", ["==", ["get", "id"], p.selectedSiteId ?? ""]);
     const vis = (v: boolean) => (v ? "visible" : "none");
     for (const l of ["sites-circle", "sites-equipment", "sites-selected"]) map.setLayoutProperty(l, "visibility", vis(p.layers.sites));
@@ -362,6 +377,10 @@ export function MapView(props: MapViewProps) {
   );
   useEffect(() => whenReady((map) => setData(map, "highlight", props.highlight)), [props.highlight]);
   useEffect(() => whenReady((map) => setData(map, "draft", props.draft)), [props.draft]);
+  useEffect(() => whenReady((map) => setData(map, "marker", markerFc(props.marker))), [props.marker]);
+  useEffect(() => {
+    if (props.focus) mapRef.current?.flyTo({ center: props.focus.at, zoom: Math.max(mapRef.current.getZoom(), 17) });
+  }, [props.focus]);
   useEffect(
     () => whenReady((map) => map.setFilter("sites-selected", ["==", ["get", "id"], props.selectedSiteId ?? ""])),
     [props.selectedSiteId],

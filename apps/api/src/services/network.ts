@@ -113,7 +113,14 @@ export async function getSite(tx: Tx, id: string) {
 
   const items = await tx.execute(sql`
     SELECT e.id, e.kind, e.name, e.status, e.parent_id AS "parentId", m.name AS "modelName", m.id AS "modelId",
-           (SELECT count(*)::int FROM terminals t WHERE t.equipment_id = e.id AND t.kind = 'port') AS ports
+           (SELECT count(*)::int FROM terminals t WHERE t.equipment_id = e.id AND t.kind = 'port') AS ports,
+           -- Порты, от которых удобно трассировать: PON у OLT/ONU, абонентские (лицевые) у ящиков и кроссов.
+           (SELECT coalesce(jsonb_agg(jsonb_build_object(
+                     'terminalId', t.id, 'role', t.port_role, 'no', t.port_no, 'face', t.port_face,
+                     'connected', EXISTS (SELECT 1 FROM connections cn WHERE t.id IN (cn.a_terminal_id, cn.b_terminal_id)))
+                   ORDER BY t.port_no), '[]'::jsonb)
+            FROM terminals t
+            WHERE t.equipment_id = e.id AND (t.port_role = 'pon' OR t.port_face = 'front')) AS "tracePorts"
     FROM equipment e JOIN equipment_models m ON m.id = e.model_id
     WHERE e.site_id = ${id}
     ORDER BY e.parent_id NULLS FIRST, e.kind, e.name`);

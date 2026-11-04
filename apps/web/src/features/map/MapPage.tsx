@@ -8,6 +8,7 @@ import { findPath, useCreateRoute, useCreateSite, useNetwork, useUpdateSite } fr
 import { LayCableDialog } from "./LayCableDialog.js";
 import { MapView, type LayerVisibility, type MapHit } from "./MapView.js";
 import { CablePanel, RoutePanel, SitePanel } from "./panels/Panels.js";
+import { TracePanel, type TraceView } from "./panels/TracePanel.js";
 import { basemaps, ROUTE_KIND_LABELS, SITE_KIND_LABELS } from "./style.js";
 import { initialMode, modeHint, Toolbar } from "./Toolbar.js";
 import type { Mode, Network, Selection } from "./types.js";
@@ -42,8 +43,11 @@ export function MapPage() {
   const [search] = useSearchParams();
   const [selection, setSelection] = useState<Selection>(() => {
     const site = search.get("site");
-    return site ? { type: "site", id: site } : null;
+    const trace = search.get("trace");
+    return trace ? { type: "trace", id: trace } : site ? { type: "site", id: site } : null;
   });
+  const [traceView, setTraceView] = useState<TraceView | null>(null);
+  const [focus, setFocus] = useState<{ at: LngLat } | null>(null);
   const [chooser, setChooser] = useState<{ x: number; y: number; items: Candidate[] } | null>(null);
   const [cursorAt, setCursorAt] = useState<LngLat | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -203,8 +207,9 @@ export function MapPage() {
     if (mode.kind === "layCable") return fc(mode.routeIds.map((id) => routeById.get(id)).filter(Boolean) as Feature<Geometry>[]);
     if (selection?.type === "route") return fc(n.routes.features.filter((f) => f.properties.id === selection.id));
     if (selection?.type === "cable") return fc(n.cables.features.filter((f) => f.properties.cableId === selection.id));
+    if (selection?.type === "trace" && traceView) return fc(n.cables.features.filter((f) => traceView.spanIds.has(f.properties.id)));
     return EMPTY;
-  }, [net.data, selection, mode, routeById]);
+  }, [net.data, selection, mode, routeById, traceView]);
 
   const draft = useMemo(() => {
     const pts = (ids: string[]) =>
@@ -228,8 +233,9 @@ export function MapPage() {
       ]);
     }
     if (mode.kind === "layCable") return fc(pts(mode.siteIds));
+    if (selection?.type === "trace" && traceView) return fc(pts([...new Set(traceView.endSiteIds)]));
     return EMPTY;
-  }, [mode, sitePos, cursorAt]);
+  }, [mode, sitePos, cursorAt, selection, traceView]);
 
   const layLength = mode.kind === "layCable" ? mode.routeIds.reduce((s, id) => s + (routeById.get(id)?.properties.lengthM ?? 0), 0) : 0;
   const wantsRubberBand = (mode.kind === "drawRoute" && !!mode.fromSiteId) || (mode.kind === "addSite" && mode.chain && !!mode.lastSiteId);
@@ -258,6 +264,8 @@ export function MapPage() {
           draft={draft}
           cursor={cursor}
           draggableSiteId={mode.kind === "select" && selection?.type === "site" ? selection.id : null}
+          marker={selection?.type === "trace" ? (traceView?.marker ?? null) : null}
+          focus={focus}
           onClick={onClick}
           onHover={onHover}
           onSiteDragEnd={(id, to) => updateSite.mutate({ id, position: to }, { onError: fail })}
@@ -326,6 +334,15 @@ export function MapPage() {
           {selection.type === "site" && <SitePanel key={selection.id} id={selection.id} onClose={closePanel} onSelect={setSelection} />}
           {selection.type === "route" && <RoutePanel key={selection.id} id={selection.id} onClose={closePanel} onSelect={setSelection} />}
           {selection.type === "cable" && <CablePanel key={selection.id} id={selection.id} onClose={closePanel} onSelect={setSelection} />}
+          {selection.type === "trace" && (
+            <TracePanel
+              key={selection.id}
+              terminalId={selection.id}
+              onClose={() => (closePanel(), setTraceView(null))}
+              onView={setTraceView}
+              onFocus={(at) => setFocus({ at })}
+            />
+          )}
         </aside>
       )}
 
