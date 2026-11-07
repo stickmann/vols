@@ -1,13 +1,24 @@
 # shellcheck shell=bash
 # Выбор релиза для развёртывания. Подключается из install.sh и update.sh.
-# Релиз — опубликованный релиз GitHub, то есть тег вида v1.2.0 на коммите в main.
+# Релиз — опубликованный релиз GitHub, то есть тег вида 1.2.0 или v1.2.0 на коммите в main.
 
 say() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m!! %s\033[0m\n' "$*"; }
 confirm() { read -rp "$1 [y/N] " a; [[ "$a" =~ ^[YyДд] ]]; }
 
-# Последний стабильный релиз (теги с суффиксом вроде v1.2.0-rc1 пропускаются).
-latest_release() { git tag --list 'v[0-9]*' --sort=-v:refname | grep -v -- '-' | head -1; }
+# Теги релизов, от новых к старым. Буква v в начале не обязательна: 0.2 и v0.3.0 сравниваются как 0.2 и 0.3.0.
+release_tags() {
+  git tag --list 'v[0-9]*' '[0-9]*' | awk '{k=$0; sub(/^v/, "", k); print k "\t" $0}' | sort -t "$(printf '\t')" -k1,1Vr | cut -f2
+}
+
+# Последний стабильный релиз (теги с суффиксом вроде 1.2.0-rc1 пропускаются).
+latest_release() { release_tags | grep -v -- '-' | head -1; }
+
+# is_older A B — версия A старше B (обе — теги релизов).
+is_older() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "${1#v}" "${2#v}" | sort -V | head -1)" = "${1#v}" ]; }
+
+# Это тег релиза (а не ветка@коммит)?
+is_release() { [[ "$1" =~ ^v?[0-9] ]]; }
 
 # Что развёрнуто сейчас: тег релиза или ветка@коммит.
 current_release() { git describe --tags --exact-match 2>/dev/null || echo "$(git rev-parse --abbrev-ref HEAD)@$(git rev-parse --short HEAD)"; }
@@ -24,7 +35,7 @@ switch_release() {
   if [ -z "$want" ]; then
     want=$(latest_release)
     if [ -z "$want" ]; then
-      echo "В репозитории ещё нет релизов. Опубликуйте релиз на GitHub (тег вида v0.1.0)" >&2
+      echo "В репозитории ещё нет релизов. Опубликуйте релиз на GitHub (тег вида 0.1.0 или v0.1.0)" >&2
       echo "или укажите ветку явно, например main." >&2
       return 1
     fi
@@ -40,7 +51,7 @@ switch_release() {
     git checkout --quiet -B "$want" "origin/$want" >&2
   else
     echo "Нет релиза или ветки «$want». Последние релизы:" >&2
-    git tag --list 'v[0-9]*' --sort=-v:refname | head -10 >&2
+    release_tags | head -10 >&2
     return 1
   fi
   echo "$want"

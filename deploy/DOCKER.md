@@ -43,7 +43,7 @@ cd /opt/vols
 Переключиться на последний релиз:
 
 ```bash
-git checkout "$(git tag --list 'v[0-9]*' --sort=-v:refname | grep -v -- - | head -1)"
+git checkout "$(. deploy/release.sh && latest_release)"
 ```
 
 Или на конкретный: `git checkout v0.1.0`. Пока релизов нет, можно остаться на `main`.
