@@ -1,5 +1,7 @@
 # Развёртывание на сервере с доменом
 
+Пошаговые команды Docker без скриптов — в [DOCKER.md](DOCKER.md).
+
 Стенд — три контейнера: PostgreSQL + PostGIS, API и Caddy. Caddy раздаёт веб, проксирует `/api` и сам выпускает и продлевает HTTPS-сертификат Let's Encrypt. Отдельно настраивать nginx и certbot не нужно.
 
 На сервер ставятся **релизы GitHub**: опубликованный релиз — это тег вида `v0.1.0` на коммите в `main`. Скрипты сами берут последний релиз, можно указать и конкретный. Код на сервере не меняется между релизами, а откат на прежнюю версию — одна команда.
@@ -142,11 +144,7 @@ Let's Encrypt ограничивает число неудачных попыт�
 (crontab -l 2>/dev/null; echo "15 3 * * * cd $PWD && ./deploy/backup.sh >> /var/log/vols-backup.log 2>&1") | crontab -
 ```
 
-Восстановление из копии:
-
-```bash
-gunzip -c backups/vols-ДАТА.sql.gz | docker compose --env-file .env.prod -f docker-compose.prod.yml exec -T db psql -U vols -d vols
-```
+Восстановление из копии — по шагам в [DOCKER.md](DOCKER.md#восстановление-из-копии).
 
 Смена пароля входа на сайт: получите новый хэш, замените им значение `BASIC_AUTH_HASH` в `.env.prod` (в одинарных кавычках) и примените `docker compose --env-file .env.prod -f docker-compose.prod.yml up -d web`.
 
