@@ -55,5 +55,14 @@ export const useEnterCable = (equipmentId: string) =>
     api<{ split: boolean }>(`/equipment/${equipmentId}/cables`, { method: "POST", body: { spanId } }),
   );
 
+/** Вывести кабель из корпуса; force — вместе с соединениями на его волокнах. Транзит склеивается в один пролёт. */
 export const useLeaveCable = (equipmentId: string) =>
-  useSpliceMutation(equipmentId, (spanId: string) => api<void>(`/equipment/${equipmentId}/cables/${spanId}`, { method: "DELETE" }));
+  useSpliceMutation(equipmentId, ({ spanId, force }: { spanId: string; force?: boolean }) =>
+    api<{ merged: boolean }>(`/equipment/${equipmentId}/cables/${spanId}${force ? "?force=true" : ""}`, { method: "DELETE" }),
+  );
+
+/** Удалить все сварки и патч-корды корпуса; restoreThrough — вернуть транзит разрезанным волокнам. */
+export const useClearSplicing = (equipmentId: string) =>
+  useSpliceMutation(equipmentId, (restoreThrough: boolean) =>
+    api<{ deleted: number; restored: number }>(`/equipment/${equipmentId}/clear-splicing`, { method: "POST", body: { restoreThrough } }),
+  );
