@@ -21,6 +21,7 @@ export const STANDARD_COLORS = {
   black: { name: "Чёрный", hex: "#303030" },
   pink: { name: "Розовый", hex: "#ff8fb1" },
   aqua: { name: "Бирюзовый", hex: "#30c7c7" },
+  skyBlue: { name: "Голубой", hex: "#7cc4f0" },
   natural: { name: "Натуральный", hex: "#e8e0c8" },
 } satisfies Record<string, FiberColor>;
 const C = STANDARD_COLORS;

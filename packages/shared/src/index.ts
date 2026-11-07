@@ -1,4 +1,5 @@
 export * from "./cable.js";
+export * from "./cable-library.js";
 export * from "./colors.js";
 export * from "./network.js";
 export * from "./optics.js";

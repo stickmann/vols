@@ -4,6 +4,7 @@ import { useCableTypes, useDeleteCableType, type CableTypeListItem } from "../..
 import { ColorChip } from "../../components/ColorChip.js";
 import { Alert, Badge, Button, Dialog, Input, Select } from "../../components/ui/index.js";
 import { describeConstruction } from "./editor-state.js";
+import { LibraryDialog } from "./LibraryDialog.js";
 import { CONSTRUCTION_LABELS } from "./labels.js";
 
 export function CableTypesListPage() {
@@ -13,6 +14,7 @@ export function CableTypesListPage() {
   const [query, setQuery] = useState("");
   const [construction, setConstruction] = useState("");
   const [toDelete, setToDelete] = useState<CableTypeListItem | null>(null);
+  const [library, setLibrary] = useState(false);
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -31,10 +33,12 @@ export function CableTypesListPage() {
           <h1 className="text-xl font-semibold">Типы кабелей</h1>
           <p className="text-sm text-slate-500">Марки кабелей с конструкцией: модули, волокна и их цвета.</p>
         </div>
+        <Button onClick={() => setLibrary(true)}>Из каталога производителей</Button>
         <Button variant="primary" onClick={() => navigate("/catalog/cables/new")}>
           + Новый тип
         </Button>
       </div>
+      <LibraryDialog open={library} onClose={() => setLibrary(false)} />
 
       <div className="mb-4 grid gap-2 sm:grid-cols-[minmax(0,20rem)_minmax(0,14rem)]">
         <Input
