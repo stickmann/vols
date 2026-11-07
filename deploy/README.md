@@ -113,6 +113,48 @@ cd vols
 
 Не правьте файлы проекта на сервере: скрипт откажется переключать версию. Все настройки — в `.env.prod`, он в репозиторий не попадает.
 
+## Сервер, где 80/443 уже заняты
+
+Если на сервере уже работает другой веб-сервер, ВОЛС не нужно ставить вместо него. Тот веб-сервер остаётся снаружи, принимает HTTPS и выпускает сертификат и для домена ВОЛС, а запросы передаёт ВОЛС. Наружу ВОЛС тогда портов не открывает. `install.sh` сам обнаружит занятые порты и подскажет команду.
+
+### Соседний node-checker (Caddy в Docker)
+
+Пример для домена `vols.ctrlvpn.ru` и node-checker в `~/node-checker`. Сначала A-запись домена на IP сервера, затем:
+
+```bash
+./deploy/install.sh vols.ctrlvpn.ru --behind-proxy node-checker_default
+```
+
+ВОЛС соберётся и подключится к сети Docker `node-checker_default` под именем `vols-web`.
+
+```bash
+./deploy/attach-node-checker.sh ~/node-checker
+```
+
+Скрипт добавляет в Caddy node-checker сайт `vols.ctrlvpn.ru → vols-web:80`:
+- в `deploy/Caddyfile` node-checker — подключение файлов `deploy/sites/*.caddy`;
+- в его `docker-compose.caddy.yml` — монтирование папки `deploy/sites`;
+- файл `deploy/sites/vols.caddy` с доменом ВОЛС.
+
+Перед применением скрипт проверяет конфиг Caddy и при ошибке всё откатывает. Затем пересоздаёт контейнер `node-checker-caddy` — сайт node-checker недоступен несколько секунд. Сертификат для домена ВОЛС Caddy выпустит при первом заходе.
+
+Скрипт меняет отслеживаемые git файлы node-checker. Закоммитьте эти правки в репозиторий node-checker, чтобы `git pull` там не конфликтовал. Повторный запуск скрипта ничего не дублирует.
+
+Проверка ВОЛС в обход Caddy, прямо с сервера:
+
+```bash
+curl -I http://127.0.0.1:8090/
+```
+
+Ответ `401 Unauthorized` — нормально: это запрос пароля входа.
+
+Обновления (`./deploy/update.sh`) и копии (`./deploy/backup.sh`) работают как обычно: режим сохранён в `.env.prod` (`EDGE_NETWORK`).
+
+### Другой веб-сервер
+
+- **Caddy или nginx в Docker:** узнайте его сеть (`docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' ИМЯ_КОНТЕЙНЕРА`), установите с `--behind-proxy ЭТА_СЕТЬ` и добавьте в его конфиг проксирование домена на `vols-web:80`. Для nginx — `proxy_pass http://vols-web:80;` с заголовками `Host` и `X-Forwarded-*`.
+- **nginx прямо на сервере (не в Docker):** создайте сеть `docker network create vols-edge` и установите с `--behind-proxy vols-edge`, а в nginx — `proxy_pass http://127.0.0.1:8090;`. Сертификат для домена — через certbot.
+
 ## Если что-то не работает
 
 | Признак | Что проверить |

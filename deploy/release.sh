@@ -65,3 +65,14 @@ set_env() {
     printf "%s='%s'\n" "$1" "$2" >> .env.prod
   fi
 }
+
+# env_value КЛЮЧ — значение из .env.prod (пусто, если нет файла или ключа).
+env_value() { sed -n "s/^$1='\{0,1\}\([^']*\)'\{0,1\}\$/\1/p" .env.prod 2>/dev/null | tail -1; }
+
+# vols_compose … — docker compose с файлами и настройками стенда.
+# Если ВОЛС стоит за чужим веб-сервером (EDGE_NETWORK), подключается docker-compose.edge.yml.
+vols_compose() {
+  local files=(-f docker-compose.prod.yml)
+  [ -n "$(env_value EDGE_NETWORK)" ] && files+=(-f docker-compose.edge.yml)
+  docker compose --env-file .env.prod "${files[@]}" "$@"
+}
