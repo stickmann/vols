@@ -3,11 +3,13 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { NavLink, Outlet } from "react-router";
 import { Button, Dialog, Field, Input, cx } from "../components/ui/index.js";
+import { UndoToast } from "../features/trash/undo.js";
 import { getTenantId, setTenantId } from "../lib/tenant.js";
 
 const nav = [
   { to: "/map", label: "Карта" },
   { to: "/documents", label: "Документы" },
+  { to: "/trash", label: "Корзина" },
   { section: "Справочники" },
   { to: "/catalog/cables", label: "Типы кабелей" },
 ] as const;
@@ -62,6 +64,7 @@ export function AppShell() {
       <main className="min-w-0 flex-1 overflow-y-auto">
         <Outlet />
       </main>
+      <UndoToast />
     </div>
   );
 }

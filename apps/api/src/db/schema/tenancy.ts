@@ -43,7 +43,31 @@ export const auditLog = pgTable(
     action: text("action").notNull(),
     oldData: jsonb("old_data"),
     newData: jsonb("new_data"),
+    /** Операция пользователя, в которой сделано изменение (см. operations). */
+    opId: uuid("op_id"),
     at: timestamp("at", { withTimezone: true }).notNull().default(sql`now()`),
   },
-  (t) => [index().on(t.tenantId, t.tableName, t.rowId), index().on(t.tenantId, t.at)],
+  (t) => [index().on(t.tenantId, t.tableName, t.rowId), index().on(t.tenantId, t.at), index().on(t.opId)],
+);
+
+/**
+ * Операция пользователя (удаление, очистка разварки, вывод кабеля…): все её изменения
+ * в audit_log помечены op_id, поэтому операцию можно отменить целиком. Это же — корзина.
+ */
+export const operations = pgTable(
+  "operations",
+  {
+    id: id(),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    userId: uuid("user_id"),
+    kind: text("kind").notNull(),
+    title: text("title").notNull(),
+    /** Последствия, показанные перед действием: [{ kind, text }]. */
+    summary: jsonb("summary"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    undoneAt: timestamp("undone_at", { withTimezone: true }),
+    /** Операция отмены, которая вернула эту. */
+    undoneByOpId: uuid("undone_by_op_id"),
+  },
+  (t) => [index().on(t.tenantId, t.createdAt)],
 );

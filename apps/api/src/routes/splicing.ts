@@ -2,6 +2,7 @@ import { connectionBatchSchema, connectionInputSchema, connectionPatchSchema, en
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { withTenant, type Tx } from "../db/client.js";
+import * as ops from "../services/operations.js";
 import * as rm from "../services/removal.js";
 import * as sp from "../services/splicing.js";
 
@@ -24,13 +25,25 @@ export const splicingRoutes: FastifyPluginAsync = async (app) => {
   app.delete("/equipment/:id/cables/:spanId", async (req, reply) => {
     const { spanId } = z.object({ spanId: z.uuid() }).parse(req.params);
     const { force } = z.object({ force: z.enum(["true", "false"]).optional() }).parse(req.query);
-    return run(req, (tx) => rm.leaveCable(tx, id(req), spanId, force === "true"));
+    return run(req, async (tx, t) => {
+      const title = `Вывод кабеля «${await rm.spanCableName(tx, spanId)}» из «${await rm.equipmentTitle(tx, id(req))}»`;
+      const { operationId, result } = await ops.withOperation(tx, t, { kind: "leave_cable", title }, () =>
+        rm.leaveCable(tx, id(req), spanId, force === "true"),
+      );
+      return { ...result, operationId, operationTitle: title };
+    });
   });
 
   // Очистить разварку: удалить сварки и патч-корды, по желанию вернуть транзит разрезанных волокон.
   app.post("/equipment/:id/clear-splicing", (req) => {
     const { restoreThrough } = z.object({ restoreThrough: z.boolean().default(true) }).parse(req.body ?? {});
-    return run(req, (tx, t) => rm.clearSplicing(tx, t, id(req), restoreThrough));
+    return run(req, async (tx, t) => {
+      const title = `Очистка разварки «${await rm.equipmentTitle(tx, id(req))}»`;
+      const { operationId, result } = await ops.withOperation(tx, t, { kind: "clear_splicing", title }, () =>
+        rm.clearSplicing(tx, t, id(req), restoreThrough),
+      );
+      return { ...result, operationId, operationTitle: title };
+    });
   });
 
   app.post("/connections", async (req, reply) => {

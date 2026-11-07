@@ -10,6 +10,8 @@ import { HttpError } from "../errors.js";
 
 export interface Impact {
   title: string;
+  /** Название операции для корзины: «Удаление муфты «М-1»». */
+  action: string;
   /** Что будет удалено (красным) и что изменится (обычным текстом). */
   effects: { kind: "delete" | "change"; text: string }[];
 }
@@ -93,7 +95,33 @@ export async function equipmentImpact(tx: Tx, id: string): Promise<Impact> {
     });
   if (ends.length)
     effects.push({ kind: "change", text: `Кабели будут отсоединены, но останутся на карте: ${names([...new Set(ends.map((e) => e.cableName))])}` });
-  return { title: eq.name || eq.modelName, effects };
+  const noun = EQUIPMENT_GENITIVE[eq.kind] ?? "оборудования";
+  return { title: eq.name || eq.modelName, action: `Удаление ${noun} «${eq.name || eq.modelName}»`, effects };
+}
+
+const EQUIPMENT_GENITIVE: Record<string, string> = {
+  closure: "муфты",
+  terminal_box: "ящика",
+  odf: "кросса",
+  splitter: "сплиттера",
+  olt: "OLT",
+  onu: "ONU",
+};
+
+/** Название корпуса для заголовков операций. */
+export async function equipmentTitle(tx: Tx, id: string) {
+  const [e] = await tx.execute<{ title: string }>(sql`
+    SELECT coalesce(e.name, m.name) AS title FROM equipment e JOIN equipment_models m ON m.id = e.model_id WHERE e.id = ${id}`);
+  if (!e) throw new HttpError(404, "Оборудование не найдено");
+  return e.title;
+}
+
+export async function spanCableName(tx: Tx, spanId: string) {
+  const [c] = await tx.execute<{ name: string }>(sql`
+    SELECT coalesce(c.name, ct.name) AS name FROM cable_spans sp JOIN cables c ON c.id = sp.cable_id
+    JOIN cable_types ct ON ct.id = c.cable_type_id WHERE sp.id = ${spanId}`);
+  if (!c) throw new HttpError(404, "Пролёт кабеля не найден");
+  return c.name;
 }
 
 /**
@@ -261,6 +289,7 @@ export async function cableImpact(tx: Tx, id: string): Promise<Impact> {
   const { splices } = await cablesImpact(tx, [id]);
   return {
     title: c.name,
+    action: `Удаление кабеля «${c.name}»`,
     effects: [
       { kind: "delete", text: "Кабель со всеми пролётами, волокнами и запасами" },
       ...(splices ? [{ kind: "delete" as const, text: `${splices} ${plural(splices, "соединение", "соединения", "соединений")} на его волокнах` }] : []),
@@ -286,7 +315,8 @@ export async function routeImpact(tx: Tx, id: string): Promise<Impact> {
     SELECT r.name, a.name AS a, b.name AS b FROM routes r JOIN sites a ON a.id = r.from_site_id JOIN sites b ON b.id = r.to_site_id WHERE r.id = ${id}`);
   if (!r) throw new HttpError(404, "Трасса не найдена");
   const cables = await cablesImpact(tx, await cablesOnRoutes(tx, sql`r.id = ${id}`));
-  return { title: r.name || `${r.a ?? "…"} — ${r.b ?? "…"}`, effects: [{ kind: "delete", text: "Участок трассы" }, ...cableEffects(cables)] };
+  const title = r.name || `${r.a ?? "…"} — ${r.b ?? "…"}`;
+  return { title, action: `Удаление трассы «${title}»`, effects: [{ kind: "delete", text: "Участок трассы" }, ...cableEffects(cables)] };
 }
 
 export async function removeRoute(tx: Tx, id: string) {
@@ -320,7 +350,8 @@ export async function siteImpact(tx: Tx, id: string): Promise<Impact> {
   if (conns!.n) effects.push({ kind: "delete", text: `${conns!.n} ${plural(conns!.n, "соединение", "соединения", "соединений")} в этом месте` });
   if (routes!.n) effects.push({ kind: "delete", text: `${routes!.n} ${plural(routes!.n, "участок", "участка", "участков")} трассы от этого места` });
   effects.push(...cableEffects(cables));
-  return { title: s.name || "Место без названия", effects };
+  const title = s.name || "Место без названия";
+  return { title, action: `Удаление места «${title}»`, effects };
 }
 
 export async function removeSite(tx: Tx, id: string) {
