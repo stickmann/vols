@@ -19,8 +19,7 @@ if [ -z "${VOLS_RELEASE_READY:-}" ]; then
   fi
 
   TO=$(switch_release "${1:-}")
-  if [[ "$FROM" == v* && "$TO" == v* && "$FROM" != "$TO" ]] &&
-    [ "$(printf '%s\n%s\n' "$FROM" "$TO" | sort -V | head -1)" = "$TO" ]; then
+  if is_release "$FROM" && is_release "$TO" && is_older "$TO" "$FROM"; then
     warn "Откат с $FROM на $TO. Миграции базы не откатываются: если более новая версия меняла схему,"
     warn "старый код может с ней не работать. Тогда восстановите копию, сделанную выше (см. deploy/DOCKER.md)."
     if ! confirm "Продолжить откат?"; then
