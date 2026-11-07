@@ -87,6 +87,12 @@ chmod 600 .env.prod
 alias dc='docker compose --env-file .env.prod -f docker-compose.prod.yml'
 ```
 
+Если ВОЛС стоит за чужим веб-сервером (в `.env.prod` есть `EDGE_NETWORK`, см. «Сервер, где 80/443 уже заняты» в [README.md](README.md)), добавьте второй файл:
+
+```bash
+alias dc='docker compose --env-file .env.prod -f docker-compose.prod.yml -f docker-compose.edge.yml'
+```
+
 Сборка образов (первый раз 3–10 минут) и запуск базы, API и веба:
 
 ```bash

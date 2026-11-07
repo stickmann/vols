@@ -7,13 +7,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 # shellcheck source=deploy/release.sh
 . deploy/release.sh
-COMPOSE=(docker compose --env-file .env.prod -f docker-compose.prod.yml)
 
 if [ -z "${VOLS_RELEASE_READY:-}" ]; then
   FROM=$(current_release)
   say "Сейчас развёрнуто: $FROM"
 
-  if "${COMPOSE[@]}" ps --status running --services 2>/dev/null | grep -qx db; then
+  if vols_compose ps --status running --services 2>/dev/null | grep -qx db; then
     say "Резервная копия базы перед обновлением"
     ./deploy/backup.sh
   fi
@@ -35,13 +34,13 @@ fi
 set_env VOLS_VERSION "$(app_version)"
 
 say "Сборка и перезапуск контейнеров"
-"${COMPOSE[@]}" up -d --build
+vols_compose up -d --build
 
 say "Миграции базы данных"
-"${COMPOSE[@]}" run --rm api node_modules/.bin/tsx src/scripts/migrate.ts
+vols_compose run --rm api node_modules/.bin/tsx src/scripts/migrate.ts
 
 # Старые образы после пересборки больше не нужны.
 docker image prune -f >/dev/null
 
-"${COMPOSE[@]}" ps
+vols_compose ps
 say "Готово: версия $(app_version)"

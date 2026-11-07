@@ -1,0 +1,15 @@
+# Дополнение к docker-compose.prod.yml, когда порты 80/443 заняты другим веб-сервером в Docker
+# (например, Caddy соседнего проекта). Веб ВОЛС подключается к его сети под именем vols-web,
+# а тот проксирует на него свой домен: reverse_proxy vols-web:80. Подключается скриптами сам,
+# если в .env.prod задан EDGE_NETWORK. См. deploy/README.md, «Сервер, где 80/443 уже заняты».
+services:
+  web:
+    networks:
+      default:
+      edge:
+        aliases: [vols-web]
+
+networks:
+  edge:
+    name: ${EDGE_NETWORK:?задайте EDGE_NETWORK в .env.prod}
+    external: true
