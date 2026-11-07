@@ -49,7 +49,7 @@ cat ~/.ssh/id_ed25519.pub
 ## 4. Установка
 
 ```bash
-git clone -b claude/lucid-clarke-biww0a git@github.com:stickmann/vols.git
+git clone git@github.com:stickmann/vols.git
 ```
 
 На вопрос о подлинности github.com ответьте `yes`.
