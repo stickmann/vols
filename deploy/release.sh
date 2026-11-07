@@ -67,7 +67,11 @@ set_env() {
 }
 
 # env_value КЛЮЧ — значение из .env.prod (пусто, если нет файла или ключа).
-env_value() { sed -n "s/^$1='\{0,1\}\([^']*\)'\{0,1\}\$/\1/p" .env.prod 2>/dev/null | tail -1; }
+env_value() {
+  # Файла ещё нет при первой установке: это не ошибка (иначе set -e молча завершит скрипт).
+  [ -f .env.prod ] || return 0
+  sed -n "s/^$1='\{0,1\}\([^']*\)'\{0,1\}\$/\1/p" .env.prod | tail -1
+}
 
 # vols_compose … — docker compose с файлами и настройками стенда.
 # Если ВОЛС стоит за чужим веб-сервером (EDGE_NETWORK), подключается docker-compose.edge.yml.
