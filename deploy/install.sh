@@ -59,7 +59,7 @@ fi
 
 ENV_FILE=".env.prod"
 # За чужим веб-сервером — если указан сейчас или был указан при прошлой установке.
-[ -z "$EDGE" ] && EDGE=$(env_value EDGE_NETWORK)
+if [ -z "$EDGE" ]; then EDGE=$(env_value EDGE_NETWORK); fi
 
 # Проверки до запуска: иначе сертификат не выпустится и упрётся в лимиты Let's Encrypt.
 if [ -n "$DOMAIN" ]; then
