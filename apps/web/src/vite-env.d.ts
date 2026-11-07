@@ -6,4 +6,6 @@ interface ImportMetaEnv {
   /** Шаблон URL растровых тайлов спутниковой подложки: https://…/{z}/{x}/{y}. */
   readonly VITE_SATELLITE_TILES?: string;
   readonly VITE_SATELLITE_ATTRIBUTION?: string;
+  /** Версия релиза, подставляется при сборке на сервере. */
+  readonly VITE_APP_VERSION?: string;
 }

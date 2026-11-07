@@ -56,7 +56,7 @@ export function buildApp(opts: AppOptions) {
     return reply.code(500).send({ error: "Внутренняя ошибка" });
   });
 
-  app.get("/health", async () => ({ ok: true }));
+  app.get("/health", async () => ({ ok: true, version: process.env.VOLS_VERSION ?? "dev" }));
   app.register(catalogRoutes, { prefix: "/api/v1" });
   app.register(networkRoutes, { prefix: "/api/v1" });
   app.register(splicingRoutes, { prefix: "/api/v1" });

@@ -1,12 +1,24 @@
 #!/usr/bin/env bash
-# Установка стенда ВОЛС на чистый сервер (Ubuntu/Debian).
-#   ./deploy/install.sh vols.example.ru   — с доменом и HTTPS
-#   ./deploy/install.sh                   — по IP-адресу, без HTTPS
+# Установка стенда ВОЛС на чистый сервер (Ubuntu/Debian) из релиза GitHub.
+#   ./deploy/install.sh vols.example.ru                    — последний релиз, домен с HTTPS
+#   ./deploy/install.sh vols.example.ru --version v0.2.0   — конкретный релиз
+#   ./deploy/install.sh                                    — по IP-адресу, без HTTPS
 # Повторный запуск безопасен: существующий .env.prod и данные не трогаются.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# shellcheck source=deploy/release.sh
+. deploy/release.sh
 
-DOMAIN="${1:-}"
+DOMAIN=""
+VERSION=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --version) VERSION="${2:?укажите версию после --version}"; shift 2 ;;
+    --version=*) VERSION="${1#--version=}"; shift ;;
+    -*) echo "Неизвестный параметр: $1" >&2; exit 1 ;;
+    *) DOMAIN="$1"; shift ;;
+  esac
+done
 # Частая ошибка — указать адрес вместе со схемой или слэшем: https://vols.example.ru/
 DOMAIN="${DOMAIN#http://}"; DOMAIN="${DOMAIN#https://}"; DOMAIN="${DOMAIN%%/*}"
 DOMAIN=$(printf '%s' "$DOMAIN" | tr '[:upper:]' '[:lower:]')
@@ -14,17 +26,23 @@ if [ -n "$DOMAIN" ] && ! [[ "$DOMAIN" =~ ^[a-z0-9.-]+\.[a-z0-9-]+$ ]]; then
   echo "Не похоже на доменное имя: $DOMAIN (кириллический домен укажите в punycode, xn--...)" >&2
   exit 1
 fi
-ENV_FILE=".env.prod"
-COMPOSE=(docker compose --env-file "$ENV_FILE" -f docker-compose.prod.yml)
-
-say() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
-warn() { printf '\033[1;33m!! %s\033[0m\n' "$*"; }
-confirm() { read -rp "$1 [y/N] " a; [[ "$a" =~ ^[YyДд] ]]; }
 
 if [ "$(id -u)" -ne 0 ] && ! docker info >/dev/null 2>&1; then
   echo "Запустите от root или через sudo: sudo ./deploy/install.sh $DOMAIN" >&2
   exit 1
 fi
+
+# Сначала переключаемся на релиз и дальше выполняем установку скриптом из этого релиза:
+# так скрипт, docker-compose и код всегда одной версии.
+if [ -z "${VOLS_RELEASE_READY:-}" ]; then
+  say "Выбор релиза"
+  REL=$(switch_release "$VERSION")
+  echo "Устанавливается: $REL"
+  VOLS_RELEASE_READY=1 exec ./deploy/install.sh ${DOMAIN:+"$DOMAIN"}
+fi
+
+ENV_FILE=".env.prod"
+COMPOSE=(docker compose --env-file "$ENV_FILE" -f docker-compose.prod.yml)
 
 # Проверки до запуска: иначе Caddy не выпустит сертификат и упрётся в лимиты Let's Encrypt.
 if [ -n "$DOMAIN" ]; then
@@ -108,6 +126,8 @@ elif [ -n "$DOMAIN" ]; then
   echo "Адрес сайта в $ENV_FILE: $DOMAIN"
 fi
 
+set_env VOLS_VERSION "$(app_version)"
+
 say "Сборка и запуск контейнеров (первый раз — несколько минут)"
 "${COMPOSE[@]}" up -d --build
 
@@ -120,10 +140,10 @@ say "Демо-данные (если ещё не созданы)"
 ADDR=$(grep '^SITE_ADDRESS=' "$ENV_FILE" | cut -d"'" -f2)
 if [ "$ADDR" = ":80" ]; then
   IP=$(curl -fsS -4 https://ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
-  say "Готово: http://${IP}/"
+  say "Готово: http://${IP}/ (версия $(app_version))"
   echo "Без домена соединение не шифруется. Для HTTPS: укажите домен (A-запись на этот сервер)"
   echo "в SITE_ADDRESS в $ENV_FILE и запустите ./deploy/update.sh"
 else
-  say "Готово: https://${ADDR}/"
+  say "Готово: https://${ADDR}/ (версия $(app_version))"
   echo "Сертификат выпускается автоматически при первом заходе; DNS A-запись домена должна указывать на этот сервер."
 fi
