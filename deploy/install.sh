@@ -70,12 +70,28 @@ if [ -n "$DOMAIN" ]; then
   fi
 fi
 
-BUSY=$(ss -Htlnp 2>/dev/null | awk '$4 ~ /:(80|443)$/' | grep -v docker-proxy || true)
-if [ -n "$BUSY" ]; then
-  warn "Порты 80/443 заняты другой программой (часто nginx или apache):"
-  echo "$BUSY"
-  echo "Остановите её, например: systemctl disable --now nginx" >&2
-  exit 1
+# Порты 80/443 нужны, только если ВОЛС сам принимает HTTPS (WEB_HTTP_BIND не задан).
+if ! grep -qs "^WEB_HTTP_BIND=" .env.prod; then
+  BUSY=$(ss -Htlnp 2>/dev/null | awk '$4 ~ /:(80|443)$/' || true)
+  # docker-proxy — это опубликованный порт контейнера. Свой (проект vols) не мешает, чужой — мешает.
+  if [ -n "$BUSY" ] && command -v docker >/dev/null 2>&1 && echo "$BUSY" | grep -q docker-proxy; then
+    OTHER=$(docker ps --format '{{.Label "com.docker.compose.project"}}\t{{.Names}} ({{.Image}})\t{{.Ports}}' |
+      awk -F'\t' '$1 != "vols"' | grep -E ':(80|443)->' | cut -f2 || true)
+    BUSY=$(echo "$BUSY" | grep -v docker-proxy || true)
+    if [ -n "$OTHER" ]; then
+      warn "Порты 80/443 заняты другим контейнером Docker:"
+      echo "$OTHER"
+      echo "ВОЛС можно поставить за этот веб-сервер: см. «Сервер, где 80/443 уже заняты» в deploy/README.md." >&2
+      exit 1
+    fi
+  fi
+  if [ -n "$BUSY" ]; then
+    warn "Порты 80/443 заняты другой программой (часто nginx или apache):"
+    echo "$BUSY"
+    echo "Остановите её (например: systemctl disable --now nginx) или поставьте ВОЛС за неё:" >&2
+    echo "см. «Сервер, где 80/443 уже заняты» в deploy/README.md." >&2
+    exit 1
+  fi
 fi
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
   say "Открываю порты 80 и 443 в ufw"
