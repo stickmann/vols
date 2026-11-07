@@ -229,6 +229,8 @@ export const cableSpans = pgTable(
 export const spanRoutes = pgTable(
   "span_routes",
   {
+    /** Нужен журналу изменений и отмене операций; ключ таблицы — (span_id, seq). */
+    id: uuid("id").notNull().defaultRandom().unique(),
     tenantId: tenantId(),
     spanId: uuid("span_id").notNull(),
     seq: integer("seq").notNull(),

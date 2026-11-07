@@ -2,6 +2,7 @@ export type { CableIn, Conn, Device, FiberIn, Port, SplicingData } from "@vols/s
 import type { SplicingData } from "@vols/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client.js";
+import { offerUndo } from "../trash/undo.js";
 
 
 const key = (id: string) => ["splicing", id] as const;
@@ -58,11 +59,17 @@ export const useEnterCable = (equipmentId: string) =>
 /** Вывести кабель из корпуса; force — вместе с соединениями на его волокнах. Транзит склеивается в один пролёт. */
 export const useLeaveCable = (equipmentId: string) =>
   useSpliceMutation(equipmentId, ({ spanId, force }: { spanId: string; force?: boolean }) =>
-    api<{ merged: boolean }>(`/equipment/${equipmentId}/cables/${spanId}${force ? "?force=true" : ""}`, { method: "DELETE" }),
+    api<{ merged: boolean; operationId: string; operationTitle: string }>(
+      `/equipment/${equipmentId}/cables/${spanId}${force ? "?force=true" : ""}`,
+      { method: "DELETE" },
+    ).then((r) => (offerUndo(r), r)),
   );
 
 /** Удалить все сварки и патч-корды корпуса; restoreThrough — вернуть транзит разрезанным волокнам. */
 export const useClearSplicing = (equipmentId: string) =>
   useSpliceMutation(equipmentId, (restoreThrough: boolean) =>
-    api<{ deleted: number; restored: number }>(`/equipment/${equipmentId}/clear-splicing`, { method: "POST", body: { restoreThrough } }),
+    api<{ deleted: number; restored: number; operationId: string; operationTitle: string }>(`/equipment/${equipmentId}/clear-splicing`, {
+      method: "POST",
+      body: { restoreThrough },
+    }).then((r) => (offerUndo(r), r)),
   );

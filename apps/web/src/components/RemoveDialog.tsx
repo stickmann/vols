@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client.js";
+import { offerUndo } from "../features/trash/undo.js";
 import { Alert, Button, Dialog } from "./ui/index.js";
 
 export type RemovableKind = "sites" | "routes" | "cables" | "equipment";
@@ -35,8 +36,9 @@ export function RemoveDialog({
     gcTime: 0,
   });
   const remove = useMutation({
-    mutationFn: () => api<void>(`/${kind}/${id}?force=true`, { method: "DELETE" }),
-    onSuccess: () => {
+    mutationFn: () => api<{ operationId: string; operationTitle: string }>(`/${kind}/${id}?force=true`, { method: "DELETE" }),
+    onSuccess: (r) => {
+      offerUndo(r);
       onRemoved?.();
       onClose();
       // Удаление задевает карту, панели, разварку соседних корпусов и трассы. Запросы самого
@@ -81,7 +83,7 @@ export function RemoveDialog({
               </li>
             ))}
           </ul>
-          <p className="text-xs text-slate-500">Действие не отменить. Все изменения записываются в журнал.</p>
+          <p className="text-xs text-slate-500">Удаление можно отменить сразу или позже из корзины (30 дней).</p>
         </div>
       )}
       {remove.isError && (

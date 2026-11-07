@@ -95,7 +95,7 @@ describe("очистка разварки", () => {
     expect(s.connections.filter((c) => c.kind === "through")).toHaveLength(6);
 
     const r = await call("POST", `/equipment/${ids.closure}/clear-splicing`, { restoreThrough: true });
-    expect(r.body).toEqual({ deleted: 2, restored: 2 });
+    expect(r.body).toMatchObject({ deleted: 2, restored: 2 });
     s = await splicing(ids.closure);
     expect(s.connections.every((c) => c.kind === "through")).toBe(true);
     expect(s.connections).toHaveLength(8);
@@ -104,7 +104,7 @@ describe("очистка разварки", () => {
   it("без восстановления транзита волокна остаются разрезанными", async () => {
     await spliceSplitter(ids.closure);
     const r = await call("POST", `/equipment/${ids.closure}/clear-splicing`, { restoreThrough: false });
-    expect(r.body).toEqual({ deleted: 2, restored: 0 });
+    expect(r.body).toMatchObject({ deleted: 2, restored: 0 });
     expect((await splicing(ids.closure)).connections).toHaveLength(6);
   });
 });
@@ -125,7 +125,7 @@ describe("удаление муфты", () => {
     expect((await call("DELETE", `/equipment/${ids.closure}`)).status).toBe(409);
     expect(await cable(ids.k1).then((c) => c.spans)).toHaveLength(2);
 
-    expect((await call("DELETE", `/equipment/${ids.closure}?force=true`)).status).toBe(204);
+    expect((await call("DELETE", `/equipment/${ids.closure}?force=true`)).status).toBe(200);
     const c = await cable(ids.k1);
     expect(c.spans).toHaveLength(1);
     expect(c.spans[0]).toMatchObject({ seq: 1, fromSiteId: ids.A, toSiteId: ids.D, fromEquipmentId: ids.odf, toEquipmentId: ids.box, routeIds });
@@ -153,7 +153,7 @@ describe("вывод кабеля из корпуса", () => {
     const incoming = s.cables.find((c) => c.side === "b")!.spanId;
     expect((await call("DELETE", `/equipment/${m2}/cables/${incoming}`)).status).toBe(409);
     const r = await call("DELETE", `/equipment/${m2}/cables/${incoming}?force=true`);
-    expect(r.body).toEqual({ merged: true });
+    expect(r.body).toMatchObject({ merged: true });
     expect((await cable(ids.k1)).spans).toHaveLength(1);
     expect((await splicing(m2)).connections).toHaveLength(0);
     expect((await splicing(ids.box)).connections).toHaveLength(1);
@@ -168,7 +168,7 @@ describe("кабель, разрезанный в двух муфтах", () => 
     expect(c.spans.map((s) => s.seq)).toEqual([1, 2, 3]);
     expect((await splicing(mc)).connections.filter((x) => x.kind === "through")).toHaveLength(8);
 
-    expect((await call("DELETE", `/equipment/${mb}?force=true`)).status).toBe(204);
+    expect((await call("DELETE", `/equipment/${mb}?force=true`)).status).toBe(200);
     c = await cable(ids.k1);
     expect(c.spans.map((s) => [s.seq, s.fromSiteId, s.toSiteId])).toEqual([
       [1, ids.A, ids.C],
@@ -179,7 +179,7 @@ describe("кабель, разрезанный в двух муфтах", () => 
     // Транзит во второй муфте соединяет волокна нового первого пролёта со вторым.
     expect(s.cables.find((x) => x.side === "b")!.spanId).toBe(c.spans[0]!.id);
 
-    expect((await call("DELETE", `/equipment/${mc}?force=true`)).status).toBe(204);
+    expect((await call("DELETE", `/equipment/${mc}?force=true`)).status).toBe(200);
     expect((await cable(ids.k1)).spans).toHaveLength(1);
     expect((await splicing(ids.box)).connections).toHaveLength(1);
   });
@@ -191,7 +191,7 @@ describe("удаление трассы, кабеля и места", () => {
     const imp = (await call("GET", `/routes/${routeIds[2]}/impact`)).body as Impact;
     expect(imp.effects.map((e) => e.text).join("\n")).toMatch(/К-1.*К-2|К-2.*К-1/);
     expect((await call("DELETE", `/routes/${routeIds[2]}`)).status).toBe(409);
-    expect((await call("DELETE", `/routes/${routeIds[2]}?force=true`)).status).toBe(204);
+    expect((await call("DELETE", `/routes/${routeIds[2]}?force=true`)).status).toBe(200);
     expect((await call("GET", `/cables/${k2}`)).status).toBe(404);
     expect((await call("GET", `/cables/${ids.k1}`)).status).toBe(404);
     expect((await splicing(ids.box)).connections).toHaveLength(0);
@@ -203,7 +203,7 @@ describe("удаление трассы, кабеля и места", () => {
     await call("POST", "/connections", { equipmentId: ids.odf, aTerminalId: port(odf, "odf", "adapter", 2, "rear"), bTerminalId: fiber(odf, "a", 1, k3) });
     expect((await call("GET", `/cables/${k3}/impact`)).body.effects.map((e: { text: string }) => e.text)).toContain("1 соединение на его волокнах");
     expect((await call("DELETE", `/cables/${k3}`)).status).toBe(409);
-    expect((await call("DELETE", `/cables/${k3}?force=true`)).status).toBe(204);
+    expect((await call("DELETE", `/cables/${k3}?force=true`)).status).toBe(200);
     expect((await splicing(ids.odf)).connections).toHaveLength(0);
   });
 
@@ -214,7 +214,7 @@ describe("удаление трассы, кабеля и места", () => {
     expect(text).toContain("Кросс");
     expect(text).toContain("К-4");
     expect((await call("DELETE", `/sites/${ids.A}`)).status).toBe(409);
-    expect((await call("DELETE", `/sites/${ids.A}?force=true`)).status).toBe(204);
+    expect((await call("DELETE", `/sites/${ids.A}?force=true`)).status).toBe(200);
     expect((await call("GET", `/sites/${ids.A}`)).status).toBe(404);
     expect((await call("GET", `/cables/${k4}`)).status).toBe(404);
     expect((await call("GET", `/routes/${routeIds[0]}`)).status).toBe(404);
