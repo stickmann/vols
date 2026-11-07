@@ -143,6 +143,37 @@ describe("отмена операций", () => {
     expect(after.find((o) => o.id === del.body.operationId)!.undoneAt).toBeTruthy();
   });
 
+  it("восстановление, которому нужен объект, удалённый позже: подсказка, что восстановить сначала", async () => {
+    const before = await snapshot();
+    // Кабель К-1 удалили, потом удалили место B, через которое он шёл.
+    const delCable = await call("DELETE", `/cables/${ids.k1}?force=true`);
+    const delSite = await call("DELETE", `/sites/${ids.B}?force=true`);
+    expect(delSite.status).toBe(200);
+
+    const r = await undo(delCable.body.operationId);
+    expect(r.status).toBe(409);
+    expect(r.body.error).toBe("Сначала восстановите «Удаление места «B»»: эта операция удалила то, без чего восстановить нельзя.");
+    // Восстановление откатилось целиком, операция по-прежнему в корзине.
+    expect((await call("GET", `/cables/${ids.k1}`)).status).toBe(404);
+    const ops = (await call("GET", "/operations")).body as Op[];
+    expect(ops.find((o) => o.id === delCable.body.operationId)).toMatchObject({ canUndo: true });
+
+    // В правильном порядке восстанавливается всё.
+    expect((await undo(delSite.body.operationId)).status).toBe(200);
+    expect((await undo(delCable.body.operationId)).status).toBe(200);
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it("ссылка на удалённый объект (устаревшая страница) — понятный ответ вместо ошибки базы", async () => {
+    const ghost = "00000000-0000-4000-8000-0000000000ff";
+    const r = await call("POST", "/equipment", {
+      siteId: ghost,
+      modelId: ((await call("GET", "/equipment-models")).body as { id: string }[])[0]!.id,
+    });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatch(/Связанный объект не найден/);
+  });
+
   it("если после операции связанные объекты менялись — отказ с объяснением, данные не тронуты", async () => {
     const del = await call("DELETE", `/equipment/${ids.closure}?force=true`);
     // Кабель снова завели в новую муфту в том же месте — склеенный пролёт изменился.

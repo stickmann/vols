@@ -81,9 +81,50 @@ export async function undoOperation(tx: Tx, tenantId: string, id: string) {
     );
   }
 
-  const { operationId } = await withOperation(tx, tenantId, { kind: "undo", title: `Отмена: ${op.title}` }, () =>
-    tx.execute(sql`SELECT undo_operation(${id})`),
-  );
-  await tx.execute(sql`UPDATE operations SET undone_at = now(), undone_by_op_id = ${operationId} WHERE id = ${id}`);
-  return { operationId, title: op.title };
+  // Нужное для восстановления удалено позже другой операцией — подсказываем, что вернуть сначала.
+  const missing = await tx.execute<{ ref_table: string; ref_id: string }>(sql`SELECT DISTINCT * FROM operation_missing_refs(${id})`);
+  if (missing.length) throw await blockedBy(tx, missing);
+
+  // Восстановление — в точке сохранения: если базе чего-то не хватит, откатываем только его
+  // и объясняем, что мешает, по журналу.
+  try {
+    const operationId = await tx.transaction(async (sp) => {
+      const r = await withOperation(sp, tenantId, { kind: "undo", title: `Отмена: ${op.title}` }, () =>
+        sp.execute(sql`SELECT undo_operation(${id})`),
+      );
+      await sp.execute(sql`UPDATE operations SET undone_at = now(), undone_by_op_id = ${r.operationId} WHERE id = ${id}`);
+      return r.operationId;
+    });
+    return { operationId, title: op.title };
+  } catch (e) {
+    throw await explainUndoFailure(tx, tenantId, e);
+  }
+}
+
+/** Какая операция удалила недостающие объекты: её нужно восстановить первой. */
+async function blockedBy(tx: Tx, missing: { ref_table: string; ref_id: string }[]) {
+  const [blocker] = await tx.execute<{ title: string }>(sql`
+    SELECT o.title FROM audit_log a JOIN operations o ON o.id = a.op_id
+    WHERE a.action = 'delete' AND o.undone_at IS NULL
+      AND a.row_id = ANY(ARRAY[${sql.join(missing.map((m) => sql`${m.ref_id}`), sql`, `)}]::uuid[])
+    ORDER BY a.id DESC LIMIT 1`);
+  if (blocker) return new HttpError(409, `Сначала восстановите «${blocker.title}»: эта операция удалила то, без чего восстановить нельзя.`);
+  const nouns = [...new Set(missing.map((m) => TABLE_NOUN[m.ref_table] ?? m.ref_table))];
+  return new HttpError(409, `Восстановить нельзя: удалено то, на что ссылается эта операция (${nouns.join(", ")}), и в корзине этого нет.`);
+}
+
+/** Ошибка базы при восстановлении — понятным текстом (запасной случай, обычно ловится проверкой выше). */
+async function explainUndoFailure(_tx: Tx, _tenantId: string, e: unknown): Promise<unknown> {
+  const pg = pgError(e);
+  if (pg?.code === "23503") return new HttpError(409, "Восстановить нельзя: удалено то, на что ссылается эта операция.");
+  if (pg?.code === "23505")
+    return new HttpError(409, "Восстановить нельзя: место удалённого уже занято новыми объектами (например, точка подключения уже сварена заново).");
+  return e;
+}
+
+function pgError(err: unknown): { code: string; detail?: string } | null {
+  for (let e = err as { code?: unknown; detail?: string; cause?: unknown } | undefined, i = 0; e && i < 5; e = e.cause as typeof e, i++) {
+    if (typeof e.code === "string" && /^2[0-9A-Z]{4}$/.test(e.code)) return { code: e.code, detail: e.detail };
+  }
+  return null;
 }

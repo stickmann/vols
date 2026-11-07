@@ -48,6 +48,14 @@ export function buildApp(opts: AppOptions) {
     }
     // Ошибки ограничений и триггеров БД — понятные сообщения для пользователя.
     const pg = findPgError(err);
+    if (pg?.code === "23503" && /violates foreign key constraint/.test(pg.message)) {
+      // Ссылка на несуществующий объект: обычно его удалили в другой вкладке или другим пользователем.
+      app.log.warn(err);
+      return reply.code(409).send({
+        error: "Связанный объект не найден — возможно, его только что удалили. Обновите страницу и повторите.",
+        code: pg.code,
+      });
+    }
     if (pg) {
       const status = pg.code === "23505" ? 409 : 422;
       return reply.code(status).send({ error: pg.message, code: pg.code });
