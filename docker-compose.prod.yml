@@ -34,6 +34,7 @@ services:
       DATABASE_URL: postgres://vols_app:${VOLS_APP_PASSWORD}@db:5432/vols
       MIGRATION_DATABASE_URL: postgres://vols:${POSTGRES_PASSWORD}@db:5432/vols
       ALLOW_TENANT_HEADER: ${ALLOW_TENANT_HEADER:-false}
+      VOLS_VERSION: ${VOLS_VERSION:-dev}
 
   web:
     build:
@@ -43,6 +44,7 @@ services:
         VITE_MAP_STYLE: ${VITE_MAP_STYLE:-}
         VITE_SATELLITE_TILES: ${VITE_SATELLITE_TILES:-}
         VITE_SATELLITE_ATTRIBUTION: ${VITE_SATELLITE_ATTRIBUTION:-}
+        VITE_APP_VERSION: ${VOLS_VERSION:-dev}
     restart: unless-stopped
     depends_on:
       api:

@@ -56,6 +56,7 @@ export function AppShell() {
           )}
         </nav>
         <TenantSwitch />
+        <div className="px-4 pb-3 text-xs text-slate-400">Версия {import.meta.env.VITE_APP_VERSION || "dev"}</div>
       </aside>
 
       <main className="min-w-0 flex-1 overflow-y-auto">

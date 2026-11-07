@@ -1,16 +1,86 @@
 #!/usr/bin/env bash
-# Установка стенда ВОЛС на чистый сервер (Ubuntu/Debian).
-#   ./deploy/install.sh vols.example.ru   — с доменом и HTTPS
-#   ./deploy/install.sh                   — по IP-адресу, без HTTPS
+# Установка стенда ВОЛС на чистый сервер (Ubuntu/Debian) из релиза GitHub.
+#   ./deploy/install.sh vols.example.ru                    — последний релиз, домен с HTTPS
+#   ./deploy/install.sh vols.example.ru --version v0.2.0   — конкретный релиз
+#   ./deploy/install.sh                                    — по IP-адресу, без HTTPS
 # Повторный запуск безопасен: существующий .env.prod и данные не трогаются.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# shellcheck source=deploy/release.sh
+. deploy/release.sh
 
-DOMAIN="${1:-}"
+DOMAIN=""
+VERSION=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --version) VERSION="${2:?укажите версию после --version}"; shift 2 ;;
+    --version=*) VERSION="${1#--version=}"; shift ;;
+    -*) echo "Неизвестный параметр: $1" >&2; exit 1 ;;
+    *) DOMAIN="$1"; shift ;;
+  esac
+done
+# Частая ошибка — указать адрес вместе со схемой или слэшем: https://vols.example.ru/
+DOMAIN="${DOMAIN#http://}"; DOMAIN="${DOMAIN#https://}"; DOMAIN="${DOMAIN%%/*}"
+DOMAIN=$(printf '%s' "$DOMAIN" | tr '[:upper:]' '[:lower:]')
+if [ -n "$DOMAIN" ] && ! [[ "$DOMAIN" =~ ^[a-z0-9.-]+\.[a-z0-9-]+$ ]]; then
+  echo "Не похоже на доменное имя: $DOMAIN (кириллический домен укажите в punycode, xn--...)" >&2
+  exit 1
+fi
+
+if [ "$(id -u)" -ne 0 ] && ! docker info >/dev/null 2>&1; then
+  echo "Запустите от root или через sudo: sudo ./deploy/install.sh $DOMAIN" >&2
+  exit 1
+fi
+
+# Сначала переключаемся на релиз и дальше выполняем установку скриптом из этого релиза:
+# так скрипт, docker-compose и код всегда одной версии.
+if [ -z "${VOLS_RELEASE_READY:-}" ]; then
+  say "Выбор релиза"
+  REL=$(switch_release "$VERSION")
+  echo "Устанавливается: $REL"
+  VOLS_RELEASE_READY=1 exec ./deploy/install.sh ${DOMAIN:+"$DOMAIN"}
+fi
+
 ENV_FILE=".env.prod"
 COMPOSE=(docker compose --env-file "$ENV_FILE" -f docker-compose.prod.yml)
 
-say() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
+# Проверки до запуска: иначе Caddy не выпустит сертификат и упрётся в лимиты Let's Encrypt.
+if [ -n "$DOMAIN" ]; then
+  say "Проверка домена $DOMAIN"
+  MY_IP=$(curl -fsS -4 --max-time 5 https://ifconfig.me 2>/dev/null || true)
+  DNS_IP=$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk 'NR==1{print $1}')
+  DNS_IP6=$(getent ahostsv6 "$DOMAIN" 2>/dev/null | awk '$1 !~ /^::ffff:/ {print $1; exit}')
+  if [ -z "$DNS_IP" ]; then
+    warn "У $DOMAIN нет A-записи (или она ещё не разошлась). Создайте A-запись на ${MY_IP:-IP этого сервера}."
+    confirm "Продолжить всё равно?" || exit 1
+  elif [ -n "$MY_IP" ] && [ "$DNS_IP" != "$MY_IP" ]; then
+    warn "$DOMAIN указывает на $DNS_IP, а у сервера адрес $MY_IP."
+    warn "Если домен за Cloudflare, выключите проксирование (серое облако, «DNS only»)."
+    confirm "Продолжить всё равно?" || exit 1
+  else
+    echo "A-запись в порядке: $DNS_IP"
+  fi
+  if [ -n "$DNS_IP6" ]; then
+    MY_IP6=$(curl -fsS -6 --max-time 5 https://ifconfig.me 2>/dev/null || true)
+    if [ "$DNS_IP6" != "$MY_IP6" ]; then
+      warn "У домена есть AAAA-запись $DNS_IP6, не совпадающая с IPv6 сервера (${MY_IP6:-нет IPv6})."
+      warn "Let's Encrypt проверяет по IPv6 в первую очередь — удалите эту AAAA-запись."
+      confirm "Продолжить всё равно?" || exit 1
+    fi
+  fi
+fi
+
+BUSY=$(ss -Htlnp 2>/dev/null | awk '$4 ~ /:(80|443)$/' | grep -v docker-proxy || true)
+if [ -n "$BUSY" ]; then
+  warn "Порты 80/443 заняты другой программой (часто nginx или apache):"
+  echo "$BUSY"
+  echo "Остановите её, например: systemctl disable --now nginx" >&2
+  exit 1
+fi
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+  say "Открываю порты 80 и 443 в ufw"
+  ufw allow 80/tcp && ufw allow 443/tcp && ufw allow 443/udp
+fi
 
 if ! command -v docker >/dev/null 2>&1; then
   say "Устанавливаю Docker"
@@ -50,7 +120,13 @@ VITE_SATELLITE_ATTRIBUTION=''
 CONF
   chmod 600 "$ENV_FILE"
   echo "Настройки записаны в $ENV_FILE"
+elif [ -n "$DOMAIN" ]; then
+  # Повторный запуск с доменом (например, раньше ставили по IP) — меняем только адрес сайта.
+  sed -i "s|^SITE_ADDRESS=.*|SITE_ADDRESS='${DOMAIN}'|" "$ENV_FILE"
+  echo "Адрес сайта в $ENV_FILE: $DOMAIN"
 fi
+
+set_env VOLS_VERSION "$(app_version)"
 
 say "Сборка и запуск контейнеров (первый раз — несколько минут)"
 "${COMPOSE[@]}" up -d --build
@@ -64,10 +140,10 @@ say "Демо-данные (если ещё не созданы)"
 ADDR=$(grep '^SITE_ADDRESS=' "$ENV_FILE" | cut -d"'" -f2)
 if [ "$ADDR" = ":80" ]; then
   IP=$(curl -fsS -4 https://ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
-  say "Готово: http://${IP}/"
+  say "Готово: http://${IP}/ (версия $(app_version))"
   echo "Без домена соединение не шифруется. Для HTTPS: укажите домен (A-запись на этот сервер)"
   echo "в SITE_ADDRESS в $ENV_FILE и запустите ./deploy/update.sh"
 else
-  say "Готово: https://${ADDR}/"
+  say "Готово: https://${ADDR}/ (версия $(app_version))"
   echo "Сертификат выпускается автоматически при первом заходе; DNS A-запись домена должна указывать на этот сервер."
 fi
