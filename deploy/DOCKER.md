@@ -102,13 +102,13 @@ dc up -d --build
 Миграции базы:
 
 ```bash
-dc run --rm api node_modules/.bin/tsx src/scripts/migrate.ts
+dc run --rm api node dist/migrate.js
 ```
 
 Демо-оператор с демо-сетью (необязательно, повторный запуск ничего не дублирует):
 
 ```bash
-dc run --rm api node_modules/.bin/tsx src/scripts/seed.ts
+dc run --rm api node dist/seed.js
 ```
 
 Проверка — все три контейнера в состоянии `running` / `healthy`:
@@ -152,7 +152,7 @@ dc up -d --build
 ```
 
 ```bash
-dc run --rm api node_modules/.bin/tsx src/scripts/migrate.ts
+dc run --rm api node dist/migrate.js
 ```
 
 Удалить старые образы:

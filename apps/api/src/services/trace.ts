@@ -56,24 +56,53 @@ interface Graph {
   adapters: Map<string, { rear?: string; front?: string }>;
 }
 
-/** Весь граф связности оператора. Сотни муфт — это десятки тысяч точек, грузим целиком. */
-async function loadGraph(tx: Tx): Promise<Graph> {
+/**
+ * Часть графа, связная с начальной точкой. Сначала база рекурсивно находит все точки,
+ * достижимые от неё по соединениям, волокнам, сплиттерам (вход ↔ выходы) и адаптерам
+ * (тыл ↔ лицо) без учёта направления, — это заведомо надмножество трассы. Затем в память
+ * грузятся только они: у оператора с сотнями муфт это сотни строк вместо десятков тысяч.
+ */
+async function loadGraph(tx: Tx, startId: string): Promise<Graph> {
   const terms = await tx.execute<TermRow>(sql`
+    WITH RECURSIVE reach(id) AS (
+      SELECT ${startId}::uuid
+      UNION
+      SELECT n.id FROM reach r CROSS JOIN LATERAL (
+        SELECT CASE WHEN c.a_terminal_id = r.id THEN c.b_terminal_id ELSE c.a_terminal_id END
+          FROM connections c WHERE c.a_terminal_id = r.id OR c.b_terminal_id = r.id
+        UNION ALL
+        SELECT t2.id FROM terminals t1 JOIN terminals t2 ON t2.fiber_id = t1.fiber_id AND t2.id <> t1.id
+          WHERE t1.id = r.id
+        UNION ALL
+        SELECT t2.id FROM terminals t1 JOIN terminals t2 ON t2.equipment_id = t1.equipment_id AND t2.id <> t1.id
+          WHERE t1.id = r.id AND (
+            (t1.port_role IN ('in', 'out') AND t2.port_role IN ('in', 'out'))
+            OR (t1.port_role = 'adapter' AND t2.port_role = 'adapter' AND t2.port_no = t1.port_no))
+      ) n(id)
+    )
     SELECT t.id, t.kind, t.site_id AS "siteId", s.name AS "siteName",
            t.equipment_id AS "equipmentId", e.name AS "equipmentName", e.kind AS "equipmentKind",
            m.name AS "modelName", m.splitter_outputs AS "splitterOutputs",
            m.insertion_loss_db::float AS "insertionLossDb", m.output_losses_db AS "outputLossesDb",
            t.fiber_id AS "fiberId", t.fiber_side AS "fiberSide",
            t.port_role AS "portRole", t.port_no AS "portNo", t.port_face AS "portFace"
-    FROM terminals t
+    FROM reach
+    JOIN terminals t ON t.id = reach.id
     JOIN sites s ON s.id = t.site_id
     LEFT JOIN equipment e ON e.id = t.equipment_id
     LEFT JOIN equipment_models m ON m.id = e.model_id`);
+  if (terms.length === 0) return emptyGraph();
+
+  const termIds = terms.map((t) => t.id);
+  const fiberIds = [...new Set(terms.map((t) => t.fiberId).filter((x): x is string => !!x))];
+  const idList = (xs: string[]) => sql`ARRAY[${sql.join(xs.map((x) => sql`${x}`), sql`, `)}]::uuid[]`;
 
   const conns = await tx.execute<{ id: string; kind: string; a: string; b: string; lossDb: number | null }>(sql`
-    SELECT id, kind, a_terminal_id AS a, b_terminal_id AS b, loss_db::float AS "lossDb" FROM connections`);
+    SELECT id, kind, a_terminal_id AS a, b_terminal_id AS b, loss_db::float AS "lossDb"
+    FROM connections WHERE a_terminal_id = ANY(${idList(termIds)})`);
 
-  const fibers = await tx.execute<FiberRow>(sql`
+  const fibers = fiberIds.length
+    ? await tx.execute<FiberRow>(sql`
     SELECT f.id, f.span_id AS "spanId", f.number, coalesce(c.name, ct.name) AS "cableName",
            jsonb_build_object('name', tf.color_name, 'hex', tf.color_hex, 'marks', tf.color_marks) AS color,
            coalesce(sp.measured_length_m::float,
@@ -84,7 +113,9 @@ async function loadGraph(tx: Tx): Promise<Graph> {
     JOIN cable_spans sp ON sp.id = f.span_id
     JOIN cables c ON c.id = sp.cable_id
     JOIN cable_types ct ON ct.id = c.cable_type_id
-    JOIN cable_type_fibers tf ON tf.cable_type_id = ct.id AND tf.number = f.number`);
+    JOIN cable_type_fibers tf ON tf.cable_type_id = ct.id AND tf.number = f.number
+    WHERE f.id = ANY(${idList(fiberIds)})`)
+    : [];
 
   const g: Graph = {
     terms: new Map(terms.map((t) => [t.id, t])),
@@ -115,6 +146,10 @@ async function loadGraph(tx: Tx): Promise<Graph> {
     }
   }
   return g;
+}
+
+function emptyGraph(): Graph {
+  return { terms: new Map(), conns: new Map(), fibers: new Map(), fiberEnds: new Map(), splitterPorts: new Map(), adapters: new Map() };
 }
 
 function label(g: Graph, t: TermRow): string {
@@ -203,7 +238,7 @@ const MAX_NODES = 20000;
 
 /** Трассировка от точки во все стороны: дерево путей с накопленными потерями и длиной. */
 export async function trace(tx: Tx, startId: string): Promise<TraceResult> {
-  const g = await loadGraph(tx);
+  const g = await loadGraph(tx, startId);
   const start = g.terms.get(startId);
   if (!start) throw new HttpError(404, "Точка подключения не найдена");
 
