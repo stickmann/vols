@@ -34,16 +34,17 @@ type OperationRow = {
   summary: { kind: string; text: string }[] | null;
   createdAt: string;
   undoneAt: string | null;
+  userName: string | null;
   canUndo: boolean;
 };
 
 /** Корзина и история: последние операции оператора. */
 export async function listOperations(tx: Tx, limit = 100) {
   return tx.execute<OperationRow>(sql`
-    SELECT id, kind, title, summary, created_at AS "createdAt", undone_at AS "undoneAt",
-           (undone_at IS NULL AND kind <> 'undo' AND created_at > now() - make_interval(days => ${UNDO_DAYS})) AS "canUndo"
-    FROM operations
-    ORDER BY created_at DESC
+    SELECT o.id, o.kind, o.title, o.summary, o.created_at AS "createdAt", o.undone_at AS "undoneAt", u.name AS "userName",
+           (o.undone_at IS NULL AND o.kind <> 'undo' AND o.created_at > now() - make_interval(days => ${UNDO_DAYS})) AS "canUndo"
+    FROM operations o LEFT JOIN users u ON u.id = o.user_id
+    ORDER BY o.created_at DESC
     LIMIT ${limit}`);
 }
 

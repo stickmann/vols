@@ -8,7 +8,12 @@ const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), 
 const external = Object.keys(pkg.dependencies).filter((d) => d !== "@vols/shared");
 
 await build({
-  entryPoints: { server: "src/server.ts", migrate: "src/scripts/migrate.ts", seed: "src/scripts/seed.ts" },
+  entryPoints: {
+    server: "src/server.ts",
+    migrate: "src/scripts/migrate.ts",
+    seed: "src/scripts/seed.ts",
+    "create-admin": "src/scripts/create-admin.ts",
+  },
   outdir: "dist",
   bundle: true,
   platform: "node",

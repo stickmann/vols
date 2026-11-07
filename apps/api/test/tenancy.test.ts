@@ -33,7 +33,13 @@ describe("изоляция операторов", () => {
       WHERE col.table_schema = 'public' AND col.column_name = 'tenant_id'
     `);
     expect(rows.length).toBeGreaterThan(10);
-    const bad = rows.filter((r) => !r.rls || !r.forced || r.policies === 0).map((r) => r.table_name);
+    // Служебные таблицы входа ищутся по токену до того, как известен оператор, поэтому без RLS;
+    // доступ — только через сервис авторизации, изоляция проверена в auth.test.ts («изоляция операторов»).
+    const AUTH_TABLES = ["sessions", "invites"];
+    const bad = rows
+      .filter((r) => !AUTH_TABLES.includes(r.table_name))
+      .filter((r) => !r.rls || !r.forced || r.policies === 0)
+      .map((r) => r.table_name);
     expect(bad).toEqual([]);
   });
 
