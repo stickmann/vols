@@ -5,10 +5,6 @@ import { Alert, Badge, Button, Field, Input, Select, Textarea } from "../../../c
 import {
   useCable,
   useCreateEquipment,
-  useDeleteCable,
-  useDeleteEquipment,
-  useDeleteRoute,
-  useDeleteSite,
   useEquipmentModels,
   useRoute,
   useSite,
@@ -18,6 +14,7 @@ import {
 } from "../api.js";
 import { EQUIPMENT_KIND_LABELS, ROUTE_KIND_LABELS, SITE_KIND_LABELS, STATUS_LABELS } from "../style.js";
 import type { Selection, SiteDetails } from "../types.js";
+import { RemoveDialog } from "../../../components/RemoveDialog.js";
 
 type Select_ = (s: Selection) => void;
 
@@ -74,26 +71,14 @@ function useFormDraft<T extends object>(source: T | undefined) {
   return { draft, set, dirty, reset: () => setDraft(source) };
 }
 
-function DeleteButton({ label, onConfirm, disabled, title }: { label: string; onConfirm: () => void; disabled?: boolean; title?: string }) {
-  const [ask, setAsk] = useState(false);
-  if (!ask)
-    return (
-      <Button size="sm" variant="ghost" className="text-red-600 hover:bg-red-50" onClick={() => setAsk(true)} disabled={disabled} title={title}>
-        {label}
-      </Button>
-    );
+function RemoveButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
-    <span className="flex items-center gap-1">
-      <span className="text-sm text-slate-600">Точно?</span>
-      <Button size="sm" variant="danger" onClick={onConfirm}>
-        Да, удалить
-      </Button>
-      <Button size="sm" variant="ghost" onClick={() => setAsk(false)}>
-        Нет
-      </Button>
-    </span>
+    <Button size="sm" variant="ghost" className="text-red-600 hover:bg-red-50" onClick={onClick}>
+      {label}
+    </Button>
   );
 }
+
 
 function MutationError({ error }: { error: Error | null }) {
   return error ? <Alert>{error.message}</Alert> : null;
@@ -104,7 +89,7 @@ function MutationError({ error }: { error: Error | null }) {
 export function SitePanel({ id, onClose, onSelect }: { id: string; onClose: () => void; onSelect: Select_ }) {
   const q = useSite(id);
   const update = useUpdateSite();
-  const del = useDeleteSite();
+  const [removing, setRemoving] = useState(false);
   const src = useMemo(
     () =>
       q.data && {
@@ -190,8 +175,8 @@ export function SitePanel({ id, onClose, onSelect }: { id: string; onClose: () =
       </Section>
 
       <div className="border-t border-slate-100 pt-3">
-        <MutationError error={del.error} />
-        <DeleteButton label="Удалить место" onConfirm={() => del.mutate(id, { onSuccess: onClose })} />
+        <RemoveButton label="Удалить место" onClick={() => setRemoving(true)} />
+        <RemoveDialog kind="sites" id={removing ? id : null} onClose={() => setRemoving(false)} onRemoved={onClose} />
       </div>
     </PanelShell>
   );
@@ -200,7 +185,7 @@ export function SitePanel({ id, onClose, onSelect }: { id: string; onClose: () =
 function EquipmentSection({ site, onTrace }: { site: SiteDetails; onTrace: (terminalId: string) => void }) {
   const models = useEquipmentModels();
   const create = useCreateEquipment();
-  const del = useDeleteEquipment();
+  const [removing, setRemoving] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [kind, setKind] = useState("closure");
   const [modelId, setModelId] = useState("");
@@ -240,7 +225,7 @@ function EquipmentSection({ site, onTrace }: { site: SiteDetails; onTrace: (term
           className="rounded px-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
           title="Удалить оборудование"
           aria-label={`Удалить ${e.name || EQUIPMENT_KIND_LABELS[e.kind]}`}
-          onClick={() => del.mutate(e.id)}
+          onClick={() => setRemoving(e.id)}
         >
           ✕
         </button>
@@ -286,7 +271,7 @@ function EquipmentSection({ site, onTrace }: { site: SiteDetails; onTrace: (term
           <Row key={e.id} e={e} depth={0} />
         ))}
       </ul>
-      <MutationError error={del.error} />
+      <RemoveDialog kind="equipment" id={removing} onClose={() => setRemoving(null)} />
       {adding && (
         <div className="mt-2 space-y-2 rounded-lg bg-slate-50 p-3">
           <div className="grid grid-cols-2 gap-2">
@@ -354,7 +339,7 @@ function EquipmentSection({ site, onTrace }: { site: SiteDetails; onTrace: (term
 export function RoutePanel({ id, onClose, onSelect }: { id: string; onClose: () => void; onSelect: Select_ }) {
   const q = useRoute(id);
   const update = useUpdateRoute();
-  const del = useDeleteRoute();
+  const [removing, setRemoving] = useState(false);
   const src = useMemo(
     () => q.data && { kind: q.data.kind, name: q.data.name ?? "", status: q.data.status, notes: q.data.notes ?? "" },
     [q.data],
@@ -432,13 +417,8 @@ export function RoutePanel({ id, onClose, onSelect }: { id: string; onClose: () 
       </Section>
 
       <div className="border-t border-slate-100 pt-3">
-        <MutationError error={del.error} />
-        <DeleteButton
-          label="Удалить трассу"
-          disabled={r.cables.length > 0}
-          title={r.cables.length ? "По трассе проложены кабели" : undefined}
-          onConfirm={() => del.mutate(id, { onSuccess: onClose })}
-        />
+        <RemoveButton label="Удалить трассу" onClick={() => setRemoving(true)} />
+        <RemoveDialog kind="routes" id={removing ? id : null} onClose={() => setRemoving(false)} onRemoved={onClose} />
       </div>
     </PanelShell>
   );
@@ -449,7 +429,7 @@ export function RoutePanel({ id, onClose, onSelect }: { id: string; onClose: () 
 export function CablePanel({ id, onClose, onSelect }: { id: string; onClose: () => void; onSelect: Select_ }) {
   const q = useCable(id);
   const update = useUpdateCable();
-  const del = useDeleteCable();
+  const [removing, setRemoving] = useState(false);
   const first = q.data?.spans[0];
   const last = q.data?.spans[q.data.spans.length - 1];
   const fromSite = useSite(first?.fromSiteId ?? null);
@@ -547,13 +527,8 @@ export function CablePanel({ id, onClose, onSelect }: { id: string; onClose: () 
       </Section>
 
       <div className="border-t border-slate-100 pt-3">
-        <MutationError error={del.error} />
-        <DeleteButton
-          label="Удалить кабель"
-          disabled={c.connections > 0}
-          title={c.connections ? "У кабеля есть сварки" : undefined}
-          onConfirm={() => del.mutate(id, { onSuccess: onClose })}
-        />
+        <RemoveButton label="Удалить кабель" onClick={() => setRemoving(true)} />
+        <RemoveDialog kind="cables" id={removing ? id : null} onClose={() => setRemoving(false)} onRemoved={onClose} />
       </div>
     </PanelShell>
   );

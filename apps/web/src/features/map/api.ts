@@ -55,18 +55,15 @@ function useNetMutation<V, R>(fn: (v: V) => Promise<R>) {
 export const useCreateSite = () => useNetMutation((v: SiteInput) => api<{ id: string }>("/sites", { method: "POST", body: v }));
 export const useUpdateSite = () =>
   useNetMutation(({ id, ...v }: Partial<SiteInput> & { id: string }) => api<void>(`/sites/${id}`, { method: "PATCH", body: v }));
-export const useDeleteSite = () => useNetMutation((id: string) => api<void>(`/sites/${id}`, { method: "DELETE" }));
 
 export const useCreateRoute = () => useNetMutation((v: RouteInput) => api<{ id: string }>("/routes", { method: "POST", body: v }));
 export const useUpdateRoute = () =>
   useNetMutation(({ id, ...v }: Partial<Omit<RouteInput, "fromSiteId" | "toSiteId">> & { id: string }) =>
     api<void>(`/routes/${id}`, { method: "PATCH", body: v }),
   );
-export const useDeleteRoute = () => useNetMutation((id: string) => api<void>(`/routes/${id}`, { method: "DELETE" }));
 
 export const useCreateEquipment = () =>
   useNetMutation((v: EquipmentInput) => api<{ id: string }>("/equipment", { method: "POST", body: v }));
-export const useDeleteEquipment = () => useNetMutation((id: string) => api<void>(`/equipment/${id}`, { method: "DELETE" }));
 
 export const useCreateCable = () => useNetMutation((v: CableInput) => api<{ id: string }>("/cables", { method: "POST", body: v }));
 export const useUpdateCable = () =>
@@ -74,7 +71,6 @@ export const useUpdateCable = () =>
     ({ id, ...v }: { id: string; name?: string | null; status?: CableInput["status"]; notes?: string | null; fromEquipmentId?: string | null; toEquipmentId?: string | null }) =>
       api<void>(`/cables/${id}`, { method: "PATCH", body: v }),
   );
-export const useDeleteCable = () => useNetMutation((id: string) => api<void>(`/cables/${id}`, { method: "DELETE" }));
 
 export const useTrace = (terminalId: string | null) =>
   useQuery({

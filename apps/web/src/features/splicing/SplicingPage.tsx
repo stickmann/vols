@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { ColorChip } from "../../components/ColorChip.js";
 import { DownloadButton } from "../../components/DownloadButton.js";
+import { RemoveDialog } from "../../components/RemoveDialog.js";
 import { Alert, Badge, Button, Dialog, Field, Input, Select, cx } from "../../components/ui/index.js";
 import { EQUIPMENT_KIND_LABELS, SITE_KIND_LABELS } from "../map/style.js";
 import {
@@ -10,6 +11,7 @@ import {
   useDisconnect,
   useDisconnectMany,
   useEnterCable,
+  useClearSplicing,
   useLeaveCable,
   useSplicing,
   useUpdateConnection,
@@ -19,6 +21,7 @@ import {
 } from "./api.js";
 import { CableBlock, ConnectionLines, DeviceBlock, type DiagramCtx } from "./Diagram.js";
 import {
+  cableLabel,
   connectionByTerminal,
   KIND_LABELS,
   planPairs,
@@ -49,6 +52,10 @@ function Editor({ data }: { data: SplicingData }) {
   const disconnect = useDisconnect(eq.id);
   const disconnectMany = useDisconnectMany(eq.id);
   const leave = useLeaveCable(eq.id);
+  const navigate = useNavigate();
+  const [clearOpen, setClearOpen] = useState(false);
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const [leaving, setLeaving] = useState<CableIn | null>(null);
 
   const index = useMemo(() => terminalIndex(data), [data]);
   const byTerminal = useMemo(() => connectionByTerminal(data.connections), [data.connections]);
@@ -101,6 +108,9 @@ function Editor({ data }: { data: SplicingData }) {
   const ctx: DiagramCtx = { byTerminal, index, pending, selectedConn, onTerminal };
   const selected = data.connections.find((c) => c.id === selectedConn) ?? null;
 
+  // Транзитный кабель разрезан в корпусе: он заведён дважды (приход и уход).
+  const isTransit = (c: CableIn) => data.cables.filter((x) => x.cableId === c.cableId).length > 1;
+
   const throughOf = (c: CableIn) =>
     (c.fibers ?? [])
       .map((f) => byTerminal.get(f.terminalId))
@@ -124,11 +134,15 @@ function Editor({ data }: { data: SplicingData }) {
         <Button size="sm" variant="ghost" title="Перенести на другую сторону схемы" onClick={() => setSwapped((p) => toggle(p, c.spanId))}>
           ⇄
         </Button>
-        {!busy && (
-          <Button size="sm" variant="ghost" title="Вывести кабель из корпуса" onClick={() => leave.mutate(c.spanId, { onError: (e) => setError(e.message) })}>
-            ✕
-          </Button>
-        )}
+        <Button
+          size="sm"
+          variant="ghost"
+          title="Вывести кабель из корпуса"
+          aria-label={`Вывести кабель ${cableLabel(c)} из корпуса`}
+          onClick={() => (busy || isTransit(c) ? setLeaving(c) : leave.mutate({ spanId: c.spanId }, { onError: (e) => setError(e.message) }))}
+        >
+          ✕
+        </Button>
       </>
     );
   };
@@ -195,6 +209,12 @@ function Editor({ data }: { data: SplicingData }) {
         <DownloadButton path={`/equipment/${eq.id}/passport.pdf`} filename="Паспорт.pdf">
           Паспорт PDF
         </DownloadButton>
+        <Button onClick={() => setClearOpen(true)} disabled={s.splices + s.patches === 0}>
+          Очистить разварку…
+        </Button>
+        <Button variant="ghost" className="text-red-600 hover:bg-red-50" onClick={() => setRemoveOpen(true)}>
+          Удалить {({ closure: "муфту", terminal_box: "ящик", odf: "кросс" } as Record<string, string>)[eq.kind] ?? "корпус"}…
+        </Button>
         <Button variant="ghost" onClick={() => setShowTable((v) => !v)} aria-expanded={showTable}>
           {showTable ? "Скрыть таблицу" : "Таблица соединений"}
         </Button>
@@ -264,6 +284,9 @@ function Editor({ data }: { data: SplicingData }) {
       )}
 
       <BatchDialog open={batchOpen} onClose={() => setBatchOpen(false)} data={data} busy={byTerminal} />
+      <ClearDialog open={clearOpen} onClose={() => setClearOpen(false)} data={data} />
+      <LeaveDialog cable={leaving} data={data} onClose={() => setLeaving(null)} />
+      <RemoveDialog kind="equipment" id={removeOpen ? eq.id : null} onClose={() => setRemoveOpen(false)} onRemoved={() => navigate(`/map?site=${eq.siteId}`)} />
     </div>
   );
 }
@@ -609,5 +632,114 @@ function SeqPicker({
         </Select>
       </Field>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------- очистка и вывод кабелей
+
+function ClearDialog({ open, onClose, data }: { open: boolean; onClose: () => void; data: SplicingData }) {
+  const clear = useClearSplicing(data.equipment.id);
+  const [restore, setRestore] = useState(true);
+  const counts = useMemo(() => {
+    const by = (k: string) => data.connections.filter((c) => c.kind === k).length;
+    return { fusion: by("fusion"), mechanical: by("mechanical"), patch: by("patch") };
+  }, [data.connections]);
+  const transit = new Set(data.cables.filter((c) => data.cables.filter((x) => x.cableId === c.cableId).length > 1).map((c) => c.cableId));
+  const close = () => {
+    clear.reset();
+    onClose();
+  };
+  return (
+    <Dialog
+      open={open}
+      onClose={close}
+      title="Очистить разварку?"
+      footer={
+        clear.data ? (
+          <Button variant="primary" onClick={close}>
+            Готово
+          </Button>
+        ) : (
+          <>
+            <Button onClick={close}>Отмена</Button>
+            <Button variant="danger" disabled={clear.isPending} onClick={() => clear.mutate(restore)}>
+              Очистить
+            </Button>
+          </>
+        )
+      }
+    >
+      {clear.data ? (
+        <p className="text-sm">
+          Удалено соединений: <b>{clear.data.deleted}</b>
+          {clear.data.restored > 0 && (
+            <>
+              , транзит восстановлен у волокон: <b>{clear.data.restored}</b>
+            </>
+          )}
+          .
+        </p>
+      ) : (
+        <div className="space-y-3 text-sm">
+          <ul className="space-y-1">
+            {counts.fusion > 0 && <li>Сварок: {counts.fusion}</li>}
+            {counts.mechanical > 0 && <li>Механических соединений: {counts.mechanical}</li>}
+            {counts.patch > 0 && <li>Патч-кордов: {counts.patch}</li>}
+          </ul>
+          <p className="text-slate-600">Будут удалены все перечисленные соединения. Кабели и оборудование останутся на месте.</p>
+          {transit.size > 0 && (
+            <label className="flex items-start gap-2">
+              <input type="checkbox" className="mt-0.5" checked={restore} onChange={(e) => setRestore(e.target.checked)} />
+              <span>Вернуть транзит разрезанным волокнам транзитных кабелей ({transit.size})</span>
+            </label>
+          )}
+          {clear.isError && <Alert>{clear.error.message}</Alert>}
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
+function LeaveDialog({ cable, data, onClose }: { cable: CableIn | null; data: SplicingData; onClose: () => void }) {
+  const leave = useLeaveCable(data.equipment.id);
+  const byTerminal = useMemo(() => connectionByTerminal(data.connections), [data.connections]);
+  if (!cable) return <Dialog open={false} onClose={onClose} title="">{null}</Dialog>;
+  const both = data.cables.filter((x) => x.cableId === cable.cableId);
+  const transit = both.length > 1;
+  const conns = new Set(
+    both.flatMap((c) => (c.fibers ?? []).map((f) => byTerminal.get(f.terminalId)).filter((x): x is Conn => !!x && x.kind !== "through").map((x) => x.id)),
+  );
+  const close = () => {
+    leave.reset();
+    onClose();
+  };
+  return (
+    <Dialog
+      open
+      onClose={close}
+      title={`Вывести кабель «${cableLabel(cable)}»?`}
+      footer={
+        <>
+          <Button onClick={close}>Отмена</Button>
+          <Button variant="danger" disabled={leave.isPending} onClick={() => leave.mutate({ spanId: cable.spanId, force: true }, { onSuccess: close })}>
+            Вывести
+          </Button>
+        </>
+      }
+    >
+      <ul className="space-y-1.5 text-sm">
+        {conns.size > 0 && <li>Будут удалены соединения на его волокнах: {conns.size}</li>}
+        {transit ? (
+          <li>Кабель проходит через корпус транзитом: разрез будет убран, приход и уход снова станут одним пролётом.</li>
+        ) : (
+          <li>Кабель останется на карте, его конец будет не заведён ни в какой корпус.</li>
+        )}
+      </ul>
+      {leave.isError && (
+        <div className="mt-3">
+          <Alert>{leave.error.message}</Alert>
+        </div>
+      )}
+    </Dialog>
   );
 }

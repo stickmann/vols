@@ -14,8 +14,11 @@ import { z } from "zod";
 import { withTenant, type Tx } from "../db/client.js";
 import { HttpError } from "../errors.js";
 import * as net from "../services/network.js";
+import * as rm from "../services/removal.js";
 
 const idParams = z.object({ id: z.uuid() });
+/** force=true — удалить вместе со всем зависимым (после подтверждения в интерфейсе). */
+const forceQuery = z.object({ force: z.enum(["true", "false"]).optional() });
 
 export const networkRoutes: FastifyPluginAsync = async (app) => {
   const run = <T>(req: FastifyRequest, fn: (tx: Tx, tenantId: string) => Promise<T>) => {
@@ -23,6 +26,13 @@ export const networkRoutes: FastifyPluginAsync = async (app) => {
     return withTenant(app.db, ctx, (tx) => fn(tx, ctx.tenantId));
   };
   const id = (req: FastifyRequest) => idParams.parse(req.params).id;
+  const force = (req: FastifyRequest) => forceQuery.parse(req.query).force === "true";
+
+  // Что будет удалено вместе с объектом — для окна подтверждения.
+  app.get("/sites/:id/impact", (req) => run(req, (tx) => rm.siteImpact(tx, id(req))));
+  app.get("/routes/:id/impact", (req) => run(req, (tx) => rm.routeImpact(tx, id(req))));
+  app.get("/cables/:id/impact", (req) => run(req, (tx) => rm.cableImpact(tx, id(req))));
+  app.get("/equipment/:id/impact", (req) => run(req, (tx) => rm.equipmentImpact(tx, id(req))));
 
   app.get("/network", (req) => run(req, (tx) => net.loadNetwork(tx)));
 
@@ -48,7 +58,7 @@ export const networkRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(204).send();
   });
   app.delete("/sites/:id", async (req, reply) => {
-    await run(req, (tx) => net.deleteSite(tx, id(req)));
+    await run(req, (tx) => (force(req) ? rm.removeSite(tx, id(req)) : net.deleteSite(tx, id(req))));
     return reply.code(204).send();
   });
 
@@ -65,7 +75,7 @@ export const networkRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(204).send();
   });
   app.delete("/routes/:id", async (req, reply) => {
-    await run(req, (tx) => net.deleteRoute(tx, id(req)));
+    await run(req, (tx) => (force(req) ? rm.removeRoute(tx, id(req)) : net.deleteRoute(tx, id(req))));
     return reply.code(204).send();
   });
 
@@ -87,7 +97,7 @@ export const networkRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(204).send();
   });
   app.delete("/equipment/:id", async (req, reply) => {
-    await run(req, (tx) => net.deleteEquipment(tx, id(req)));
+    await run(req, (tx) => (force(req) ? rm.removeEquipment(tx, id(req)) : net.deleteEquipment(tx, id(req))));
     return reply.code(204).send();
   });
 
@@ -104,7 +114,7 @@ export const networkRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(204).send();
   });
   app.delete("/cables/:id", async (req, reply) => {
-    await run(req, (tx) => net.deleteCable(tx, id(req)));
+    await run(req, (tx) => (force(req) ? rm.removeCable(tx, id(req)) : net.deleteCable(tx, id(req))));
     return reply.code(204).send();
   });
 };

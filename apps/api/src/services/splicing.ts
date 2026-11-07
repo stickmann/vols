@@ -260,21 +260,4 @@ export async function enterCable(tx: Tx, tenantId: string, equipmentId: string, 
   return { split: true, spanId: secondId };
 }
 
-/** Вывести конец пролёта из корпуса (только если на его волокнах нет соединений). */
-export async function leaveCable(tx: Tx, equipmentId: string, spanId: string) {
-  const [span] = await tx.select().from(cableSpans).where(eq(cableSpans.id, spanId));
-  if (!span) throw new HttpError(404, "Пролёт кабеля не найден");
-  const end = span.fromEquipmentId === equipmentId ? "from" : span.toEquipmentId === equipmentId ? "to" : null;
-  if (!end) throw new HttpError(422, "Кабель не заведён в этот корпус");
-  const [u] = await tx.execute<{ n: number }>(sql`
-    SELECT count(*)::int AS n FROM connections cn
-    JOIN terminals t ON t.id IN (cn.a_terminal_id, cn.b_terminal_id)
-    JOIN fibers f ON f.id = t.fiber_id
-    WHERE f.span_id = ${spanId} AND t.fiber_side = ${end === "from" ? "a" : "b"}::fiber_side`);
-  if (u!.n) throw new HttpError(409, `На волокнах кабеля в этом корпусе есть соединения: ${u!.n}. Сначала удалите их.`);
-  await tx
-    .update(cableSpans)
-    .set(end === "from" ? { fromEquipmentId: null } : { toEquipmentId: null })
-    .where(eq(cableSpans.id, spanId));
-}
 
