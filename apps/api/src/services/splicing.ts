@@ -68,12 +68,17 @@ export async function getSplicing(tx: Tx, equipmentId: string) {
     SELECT cn.id, cn.kind, cn.a_terminal_id AS "aTerminalId", cn.b_terminal_id AS "bTerminalId",
            cn.loss_db::float AS "lossDb", cn.tray_no AS "trayNo", cn.slot_no AS "slotNo", cn.notes
     FROM connections cn
-    WHERE cn.equipment_id = ${equipmentId}
-       OR EXISTS (SELECT 1 FROM terminals t
-                  WHERE t.id IN (cn.a_terminal_id, cn.b_terminal_id)
-                    AND (t.equipment_id = ${equipmentId}
-                         OR t.equipment_id IN (SELECT id FROM equipment WHERE parent_id = ${equipmentId})))
-    ORDER BY cn.tray_no NULLS LAST, cn.slot_no NULLS LAST, cn.created_at`);
+    -- Соединения корпуса и все, что касаются портов его оборудования. Три ветки вместо OR,
+    -- чтобы каждая шла по индексу, а не перебирала все соединения оператора.
+    WHERE cn.id IN (
+      SELECT id FROM connections WHERE equipment_id = ${equipmentId}
+      UNION
+      SELECT c.id FROM connections c JOIN terminals t ON t.id = c.a_terminal_id
+        JOIN equipment e ON e.id = t.equipment_id WHERE e.id = ${equipmentId} OR e.parent_id = ${equipmentId}
+      UNION
+      SELECT c.id FROM connections c JOIN terminals t ON t.id = c.b_terminal_id
+        JOIN equipment e ON e.id = t.equipment_id WHERE e.id = ${equipmentId} OR e.parent_id = ${equipmentId})
+    ORDER BY cn.tray_no NULLS LAST, cn.slot_no NULLS LAST, cn.created_at, cn.id`);
 
   // Что ещё можно завести в корпус.
   const candidates = await tx.execute(sql`

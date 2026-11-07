@@ -28,21 +28,45 @@ interface Row extends Record<string, unknown> {
  * Волокно считается задействованным, если у него есть сварка или подключение (не транзит) хотя бы на одном конце.
  */
 export async function cableJournalRows(tx: Tx, status?: string): Promise<Row[]> {
+  // Всё агрегируется одним проходом по таблицам, без подзапроса на каждый кабель.
   return tx.execute<Row>(sql`
+    WITH span_len AS (
+      SELECT sp.cable_id, sum(r.length_m)::float AS route_m
+      FROM cable_spans sp JOIN span_routes x ON x.span_id = sp.id JOIN routes r ON r.id = x.route_id
+      GROUP BY sp.cable_id
+    ), slack AS (
+      SELECT sp.cable_id, sum(k.length_m)::float AS slack_m
+      FROM cable_spans sp JOIN cable_slacks k ON k.span_id = sp.id
+      GROUP BY sp.cable_id
+    ), spans AS (
+      SELECT cable_id, count(*)::int AS n FROM cable_spans GROUP BY cable_id
+    ), used AS (
+      SELECT sp.cable_id, count(DISTINCT f.number)::int AS n
+      FROM connections cn
+      CROSS JOIN LATERAL (VALUES (cn.a_terminal_id), (cn.b_terminal_id)) e(terminal_id)
+      JOIN terminals tm ON tm.id = e.terminal_id
+      JOIN fibers f ON f.id = tm.fiber_id
+      JOIN cable_spans sp ON sp.id = f.span_id
+      WHERE cn.kind <> 'through'
+      GROUP BY sp.cable_id
+    ), type_fibers AS (
+      SELECT cable_type_id, count(*)::int AS n FROM cable_type_fibers GROUP BY cable_type_id
+    )
     SELECT c.id, c.name, t.name AS "typeName", c.status,
-           (SELECT count(*)::int FROM cable_type_fibers f WHERE f.cable_type_id = t.id) AS "fiberCount",
-           (SELECT count(DISTINCT f.number)::int
-              FROM fibers f JOIN cable_spans sp ON sp.id = f.span_id
-              JOIN terminals tm ON tm.fiber_id = f.id
-              JOIN connections cn ON tm.id IN (cn.a_terminal_id, cn.b_terminal_id) AND cn.kind <> 'through'
-             WHERE sp.cable_id = c.id) AS "usedFibers",
-           (SELECT count(*)::int FROM cable_spans sp WHERE sp.cable_id = c.id) AS spans,
-           coalesce((SELECT sum(r.length_m) FROM cable_spans sp JOIN span_routes x ON x.span_id = sp.id JOIN routes r ON r.id = x.route_id WHERE sp.cable_id = c.id), 0)::float AS "routeM",
-           coalesce((SELECT sum(k.length_m) FROM cable_spans sp JOIN cable_slacks k ON k.span_id = sp.id WHERE sp.cable_id = c.id), 0)::float AS "slackM",
+           coalesce(tf.n, 0) AS "fiberCount",
+           coalesce(used.n, 0) AS "usedFibers",
+           coalesce(spans.n, 0) AS spans,
+           coalesce(span_len.route_m, 0) AS "routeM",
+           coalesce(slack.slack_m, 0) AS "slackM",
            0::float AS "totalM",
            fs.name AS "fromSite", fe.name AS "fromEq", ts.name AS "toSite", te.name AS "toEq"
     FROM cables c
     JOIN cable_types t ON t.id = c.cable_type_id
+    LEFT JOIN type_fibers tf ON tf.cable_type_id = t.id
+    LEFT JOIN used ON used.cable_id = c.id
+    LEFT JOIN spans ON spans.cable_id = c.id
+    LEFT JOIN span_len ON span_len.cable_id = c.id
+    LEFT JOIN slack ON slack.cable_id = c.id
     LEFT JOIN LATERAL (SELECT * FROM cable_spans WHERE cable_id = c.id ORDER BY seq LIMIT 1) first ON true
     LEFT JOIN LATERAL (SELECT * FROM cable_spans WHERE cable_id = c.id ORDER BY seq DESC LIMIT 1) last ON true
     LEFT JOIN sites fs ON fs.id = first.from_site_id

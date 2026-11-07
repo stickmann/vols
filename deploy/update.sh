@@ -37,7 +37,7 @@ say "Сборка и перезапуск контейнеров"
 vols_compose up -d --build
 
 say "Миграции базы данных"
-vols_compose run --rm api node_modules/.bin/tsx src/scripts/migrate.ts
+vols_compose run --rm api node dist/migrate.js
 
 # Старые образы после пересборки больше не нужны.
 docker image prune -f >/dev/null

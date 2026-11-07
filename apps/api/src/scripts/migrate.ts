@@ -1,12 +1,18 @@
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { createDb } from "../db/client.js";
 import { env } from "../env.js";
 
+// Папка миграций рядом с исходниками (src/scripts → ../../migrations) или со сборкой (dist → ../migrations).
+const migrationsFolder = ["../../migrations", "../migrations"]
+  .map((p) => fileURLToPath(new URL(p, import.meta.url)))
+  .find((p) => existsSync(`${p}/meta/_journal.json`))!;
+
 export async function runMigrations(url: string) {
   const { db, close } = createDb(url, { max: 1 });
   try {
-    await migrate(db, { migrationsFolder: fileURLToPath(new URL("../../migrations", import.meta.url)) });
+    await migrate(db, { migrationsFolder });
   } finally {
     await close();
   }

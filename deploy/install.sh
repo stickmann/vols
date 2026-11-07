@@ -182,10 +182,10 @@ say "Сборка и запуск контейнеров (первый раз �
 vols_compose up -d --build
 
 say "Миграции базы данных"
-vols_compose run --rm api node_modules/.bin/tsx src/scripts/migrate.ts
+vols_compose run --rm api node dist/migrate.js
 
 say "Демо-данные (если ещё не созданы)"
-vols_compose run --rm api node_modules/.bin/tsx src/scripts/seed.ts
+vols_compose run --rm api node dist/seed.js
 
 ADDR=$(env_value SITE_ADDRESS)
 if [ -n "$EDGE" ]; then
