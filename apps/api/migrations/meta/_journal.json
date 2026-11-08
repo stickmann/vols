@@ -36,6 +36,13 @@
       "when": 1794095374798,
       "tag": "0004_auth",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794096000000,
+      "tag": "0005_rls_topology_hardening",
+      "breakpoints": true
     }
   ]
 }
