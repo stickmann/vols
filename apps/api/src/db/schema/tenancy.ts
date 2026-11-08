@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { bigint, bigserial, boolean, index, jsonb, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { bigint, bigserial, boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { id, timestamps } from "./_common.js";
 import { memberRole } from "./enums.js";
 
@@ -10,6 +10,11 @@ export const tenants = pgTable("tenants", {
   slug: text("slug").notNull().unique(),
   /** Двухфакторный вход обязателен для всех пользователей оператора. */
   require2fa: boolean("require_2fa").notNull().default(false),
+  /** Тариф: free — бесплатный с лимитами, unlimited — без ограничений (см. services/plans.ts). */
+  plan: text("plan").notNull().default("free"),
+  /** Свой лимит точек учёта / пользователей вместо лимита тарифа (NULL — по тарифу). */
+  pointLimit: integer("point_limit"),
+  userLimit: integer("user_limit"),
   ...timestamps(),
 });
 

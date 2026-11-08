@@ -104,10 +104,26 @@ function Shell({ me }: { me: Me }) {
         <div className="px-4 pb-3 text-xs text-slate-400">Версия {import.meta.env.VITE_APP_VERSION || "dev"}</div>
       </aside>
 
-      <main className="min-w-0 flex-1 overflow-y-auto">
-        <Outlet />
+      <main className="flex min-w-0 flex-1 flex-col overflow-y-auto">
+        <PlanBanner me={me} />
+        <div className="min-h-0 flex-1">
+          <Outlet />
+        </div>
       </main>
       <UndoToast />
+    </div>
+  );
+}
+
+/** Предупреждение, когда лимит точек учёта тарифа почти или полностью исчерпан. */
+function PlanBanner({ me }: { me: Me }) {
+  const u = me.usage;
+  if (!u?.pointLimit || u.points < u.pointLimit * 0.9) return null;
+  const full = u.points >= u.pointLimit;
+  return (
+    <div role="status" className={cx("border-b px-4 py-2 text-sm", full ? "border-red-200 bg-red-50 text-red-800" : "border-amber-200 bg-amber-50 text-amber-900")}>
+      {full ? "Лимит тарифа исчерпан" : "Лимит тарифа почти исчерпан"}: точек учёта {u.points} из {u.pointLimit} (муфты, ящики, кроссы, OLT,
+      ONU). {full ? "Новые точки добавить нельзя — удалите ненужные или перейдите на тариф без ограничений." : "Опоры, трассы и кабели в лимит не входят."}
     </div>
   );
 }

@@ -14,10 +14,10 @@ import { createCableType } from "./cable-types.js";
  * Работает под ролью приложения: id генерируется заранее, чтобы RLS
  * пропустил вставку в tenants.
  */
-export async function provisionTenant(db: Db, input: { name: string; slug: string; id?: string }): Promise<string> {
+export async function provisionTenant(db: Db, input: { name: string; slug: string; id?: string; plan?: "free" | "unlimited" }): Promise<string> {
   const tenantId = input.id ?? randomUUID();
   await withTenant(db, { tenantId }, async (tx) => {
-    await tx.insert(tenants).values({ id: tenantId, name: input.name, slug: input.slug });
+    await tx.insert(tenants).values({ id: tenantId, name: input.name, slug: input.slug, plan: input.plan ?? "free" });
 
     await tx.insert(colorSchemes).values(
       COLOR_SCHEME_PRESETS.map((s) => ({ tenantId, name: s.name, colors: s.colors })),

@@ -13,6 +13,7 @@ await build({
     migrate: "src/scripts/migrate.ts",
     seed: "src/scripts/seed.ts",
     "create-admin": "src/scripts/create-admin.ts",
+    "set-plan": "src/scripts/set-plan.ts",
   },
   outdir: "dist",
   bundle: true,

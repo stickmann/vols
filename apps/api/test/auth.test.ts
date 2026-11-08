@@ -41,6 +41,8 @@ const login = async (email: string, password = PASS) => (await call("POST", "/au
 beforeAll(async () => {
   tenantA = await newTenant(db.db);
   tenantB = await newTenant(db.db);
+  // Здесь проверяется вход, а не тарифы (лимиты — в plans.test.ts).
+  await owner.db.execute(sql`UPDATE tenants SET plan = 'unlimited' WHERE id IN (${tenantA}, ${tenantB})`);
   await addUser("owner@a.ru", "Владелец А", tenantA, "owner");
   await addUser("viewer@a.ru", "Наблюдатель", tenantA, "viewer");
   await addUser("tech@a.ru", "Монтажник", tenantA, "technician");
