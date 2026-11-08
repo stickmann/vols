@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { connections, auditLog } from "../src/db/schema/index.js";
+import { connections, auditLog, spanRoutes } from "../src/db/schema/index.js";
 import { appDb, builder, newTenant, withTenant } from "./helpers.js";
 import { expectPgError } from "./pg-error.js";
 
@@ -67,6 +67,33 @@ describe("ограничения топологии на уровне БД", () 
       }),
       "23514",
       /вход сплиттера со входом/,
+    );
+  });
+
+
+  it("проверяет reversed и конечные точки последовательности трасс", async () => {
+    const n = await tx(async (t) => {
+      const b = builder(t, tenantId);
+      const a = await b.site([49.82, 55.8]);
+      const z = await b.site([49.821, 55.8]);
+      const route = await b.route(a, z, [[49.82, 55.8], [49.821, 55.8]]);
+      const cable = await b.cable("ОКСН 1×8");
+      const span = await b.span({ cableId: cable, from: a, to: z });
+      return { a, z, route, span };
+    });
+
+    await expectPgError(
+      tx((t) =>
+        t.insert(spanRoutes).values({
+          tenantId,
+          spanId: n.span,
+          seq: 1,
+          routeId: n.route.id,
+          reversed: true,
+        }),
+      ),
+      "23514",
+      /начальное и конечное места/,
     );
   });
 
