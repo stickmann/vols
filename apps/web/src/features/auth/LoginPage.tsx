@@ -1,8 +1,9 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent, type ReactNode } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { Alert, Button, Field, Input } from "../../components/ui/index.js";
 import { useLogin, useLogin2fa } from "./api.js";
+import { useAuthConfig } from "./SignupPage.js";
 
 /** Карточка по центру экрана для входа, приглашения и сброса пароля. */
 export function AuthCard({ title, subtitle, children }: { title: string; subtitle?: ReactNode; children: ReactNode }) {
@@ -36,6 +37,7 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [step, setStep] = useState<"password" | "code">("password");
+  const signupOpen = useAuthConfig().data?.signup;
 
   const done = async () => {
     await qc.resetQueries();
@@ -102,9 +104,15 @@ export function LoginPage() {
         <Button type="submit" variant="primary" className="w-full" disabled={login.isPending || login2fa.isPending}>
           {step === "password" ? "Войти" : "Подтвердить"}
         </Button>
-        <p className="text-center text-xs text-slate-500">
-          Забыли пароль? Попросите администратора выдать ссылку для смены пароля.
-        </p>
+        <p className="text-center text-xs text-slate-500">Забыли пароль? Попросите администратора выдать ссылку для смены пароля.</p>
+        {signupOpen && step === "password" && (
+          <p className="text-center text-sm text-slate-500">
+            Нет учётной записи?{" "}
+            <Link to="/signup" className="text-brand-700 underline">
+              Зарегистрировать компанию
+            </Link>
+          </p>
+        )}
       </form>
     </AuthCard>
   );

@@ -20,6 +20,9 @@ export interface AppOptions {
    * Только для разработки и тестов — в проде выключено, работает только вход.
    */
   devTenantHeader: boolean;
+  /** Открыта ли самостоятельная регистрация операторов. */
+  signup?: boolean;
+  termsUrl?: string;
   logger?: boolean;
 }
 
@@ -116,7 +119,7 @@ export function buildApp(opts: AppOptions) {
   });
 
   app.get("/health", async () => ({ ok: true, version: process.env.VOLS_VERSION ?? "dev" }));
-  app.register(authRoutes, { prefix: "/api/v1/auth" });
+  app.register(authRoutes, { prefix: "/api/v1/auth", signup: opts.signup ?? false, termsUrl: opts.termsUrl });
   app.register(userRoutes, { prefix: "/api/v1" });
   app.register(catalogRoutes, { prefix: "/api/v1" });
   app.register(networkRoutes, { prefix: "/api/v1" });

@@ -33,6 +33,8 @@ export const users = pgTable("users", {
   /** SHA-256 одноразовых кодов восстановления. */
   recoveryCodes: jsonb("recovery_codes").$type<string[]>(),
   lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+  /** Когда принял условия использования и обработки персональных данных. */
+  termsAcceptedAt: timestamp("terms_accepted_at", { withTimezone: true }),
   disabledAt: timestamp("disabled_at", { withTimezone: true }),
   ...timestamps(),
 });
