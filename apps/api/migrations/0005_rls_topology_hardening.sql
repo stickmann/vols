@@ -134,7 +134,11 @@ BEGIN
     INTO route_count, min_seq, max_seq
     FROM span_routes WHERE span_id = target_span_id;
 
-  IF route_count = 0 OR min_seq <> 1 OR max_seq <> route_count THEN
+  -- Пустой путь допустим для низкоуровневых/непривязанных пролётов; если трассы заданы,
+  -- они обязаны образовывать полную непрерывную последовательность.
+  IF route_count = 0 THEN RETURN NULL; END IF;
+
+  IF min_seq <> 1 OR max_seq <> route_count THEN
     RAISE EXCEPTION 'Маршрут кабельного пролёта должен содержать трассы с последовательными номерами начиная с 1' USING ERRCODE = '23514';
   END IF;
 
