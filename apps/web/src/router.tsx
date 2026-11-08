@@ -6,6 +6,7 @@ import { AppShell } from "./layout/AppShell.js";
 export const router = createBrowserRouter([
   // Без входа: вход, приглашение, смена пароля по ссылке.
   { path: "login", lazy: async () => ({ Component: (await import("./features/auth/LoginPage.js")).LoginPage }) },
+  { path: "signup", lazy: async () => ({ Component: (await import("./features/auth/SignupPage.js")).SignupPage }) },
   { path: "invite/:token", lazy: async () => ({ Component: (await import("./features/auth/TokenPages.js")).InvitePage }) },
   { path: "reset/:token", lazy: async () => ({ Component: (await import("./features/auth/TokenPages.js")).ResetPage }) },
   {

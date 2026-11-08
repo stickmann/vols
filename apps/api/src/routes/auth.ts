@@ -56,7 +56,7 @@ async function limited<T>(keys: string[], fn: () => Promise<T>): Promise<T> {
 const meta = (req: FastifyRequest) => ({ ip: req.ip, userAgent: req.headers["user-agent"] });
 const password = z.string().min(1).max(200);
 
-export const authRoutes: FastifyPluginAsync = async (app) => {
+export const authRoutes: FastifyPluginAsync<{ signup: boolean; termsUrl?: string }> = async (app, opts) => {
   const session = async (req: FastifyRequest, opts: { allowPending?: boolean } = {}) => {
     const token = readSessionCookie(req);
     const s = token ? await auth.sessionByToken(app.db, token) : null;
@@ -77,6 +77,34 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     const s = await session(req, { allowPending: true });
     await limited([`2fa:${req.ip}`, `2fa:${s.userId}`], () => auth.completeTwoFactor(app.db, s, code));
     return { ok: true };
+  });
+
+  // Что показать на странице входа: открыта ли регистрация, ссылка на условия.
+  app.get("/config", async () => ({ signup: opts.signup, termsUrl: opts.termsUrl ?? null }));
+
+  /** Регистрация оператора: не чаще 5 раз в час с одного адреса; скрытое поле website — ловушка для ботов. */
+  const signups = new Map<string, number[]>();
+  app.post("/signup", async (req, reply) => {
+    if (!opts.signup) throw new HttpError(403, "Регистрация закрыта. Обратитесь к администратору сервиса.");
+    const v = z
+      .object({
+        company: z.string().trim().min(2, "Название компании — не короче 2 символов").max(200),
+        name: z.string().trim().min(2, "Укажите имя").max(120),
+        email: z.email("Некорректный e-mail").max(200),
+        password,
+        demo: z.boolean().default(true),
+        acceptTerms: z.literal(true, { error: "Нужно согласие с условиями и обработкой персональных данных" }),
+        website: z.string().max(200).optional(),
+      })
+      .parse(req.body);
+    const now = Date.now();
+    const recent = (signups.get(req.ip) ?? []).filter((t) => now - t < 3600_000);
+    if (recent.length >= 5) throw new HttpError(429, "Слишком много регистраций с этого адреса. Попробуйте через час.");
+    signups.set(req.ip, [...recent, now]);
+    if (v.website) throw new HttpError(400, "Не удалось зарегистрироваться"); // заполнил бот
+    const r = await auth.signup(app.db, v, meta(req));
+    setSessionCookie(req, reply, r.token);
+    return reply.code(201).send({ ok: true });
   });
 
   app.post("/logout", async (req, reply) => {

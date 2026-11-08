@@ -43,6 +43,13 @@
       "when": 1794163784096,
       "tag": "0005_plans",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794164225622,
+      "tag": "0006_signup",
+      "breakpoints": true
     }
   ]
 }

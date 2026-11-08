@@ -374,3 +374,44 @@ export async function updateTenant(tx: Tx, v: { name?: string; require2fa?: bool
 }
 
 export { atLeast };
+
+// ---------------------------------------------------------------- регистрация оператора
+
+export interface SignupInput {
+  company: string;
+  name: string;
+  email: string;
+  password: string;
+  demo: boolean;
+}
+
+/**
+ * Новый оператор на бесплатном тарифе и его владелец. Если что-то не удалось на полпути,
+ * созданный оператор удаляется (каскадом — справочники, сеть, членства).
+ */
+export async function signup(db: Db, v: SignupInput, meta: { ip?: string; userAgent?: string }) {
+  checkPassword(v.password);
+  const email = normEmail(v.email);
+  if (await userByEmail(db, email)) {
+    throw new HttpError(409, "Этот e-mail уже зарегистрирован — войдите. Чтобы работать у другого оператора, попросите у него приглашение.");
+  }
+  const { provisionTenant } = await import("../tenants.js");
+  const { createDemoNetwork } = await import("../demo-network.js");
+  const tenantId = await provisionTenant(db, { name: v.company.trim(), slug: `op-${randomToken().slice(0, 10).toLowerCase()}`, plan: "free" });
+  try {
+    const [u] = await db.execute<{ id: string }>(sql`
+      INSERT INTO users (email, name, password_hash, terms_accepted_at)
+      VALUES (${email}, ${v.name.trim()}, ${await hashPassword(v.password)}, now()) RETURNING id`);
+    const userId = u!.id;
+    await withUserTenant(db, userId, tenantId, async (tx) => {
+      await tx.execute(sql`INSERT INTO memberships (tenant_id, user_id, role) VALUES (${tenantId}, ${userId}, 'owner')`);
+      if (v.demo) await createDemoNetwork(tx, tenantId);
+    });
+    await db.execute(sql`UPDATE users SET last_login_at = now() WHERE id = ${userId}`);
+    return { token: await createSession(db, userId, { tenantId, pending2fa: false, ...meta }), tenantId };
+  } catch (e) {
+    await withTenant(db, { tenantId }, (tx) => tx.execute(sql`DELETE FROM tenants WHERE id = ${tenantId}`)).catch(() => {});
+    await db.execute(sql`DELETE FROM users WHERE email = ${email} AND NOT EXISTS (SELECT 1 FROM sessions WHERE user_id = users.id)`).catch(() => {});
+    throw e;
+  }
+}

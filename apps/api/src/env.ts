@@ -14,6 +14,10 @@ const schema = z.object({
     .enum(["true", "false"])
     .optional()
     .transform((v) => (v === undefined ? process.env.NODE_ENV !== "production" : v === "true")),
+  /** Самостоятельная регистрация операторов: open — для облака, closed (по умолчанию) — для установок у клиента. */
+  SIGNUP: z.enum(["open", "closed"]).default("closed"),
+  /** Ссылка на условия использования и обработки ПДн для формы регистрации (необязательно). */
+  TERMS_URL: z.string().url().optional(),
 });
 
 export const env = schema.parse(process.env);
