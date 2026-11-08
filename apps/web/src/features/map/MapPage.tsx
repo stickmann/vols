@@ -1,3 +1,4 @@
+import { useCan } from "../auth/api.js";
 import type { LngLat } from "@vols/shared";
 import type { Feature, FeatureCollection, Geometry } from "geojson";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
@@ -13,12 +14,19 @@ import { basemaps, ROUTE_KIND_LABELS, SITE_KIND_LABELS } from "./style.js";
 import { initialMode, modeHint, Toolbar } from "./Toolbar.js";
 import type { Mode, Network, Selection } from "./types.js";
 
-const EMPTY: FeatureCollection<Geometry> = { type: "FeatureCollection", features: [] };
-const fc = (features: Feature<Geometry>[]): FeatureCollection<Geometry> => ({ type: "FeatureCollection", features });
+const EMPTY: FeatureCollection<Geometry> = {
+  type: "FeatureCollection",
+  features: [],
+};
+const fc = (features: Feature<Geometry>[]): FeatureCollection<Geometry> => ({
+  type: "FeatureCollection",
+  features,
+});
 
 type Candidate = { type: "route" | "cable"; id: string; label: string };
 
 export function MapPage() {
+  const canEdit = useCan("designer");
   const net = useNetwork();
   const cableTypes = useCableTypes();
   const createSite = useCreateSite();
@@ -28,7 +36,11 @@ export function MapPage() {
   const allBasemaps = useMemo(basemaps, []);
   const [basemapId, setBasemapId] = useState(allBasemaps[0]!.id);
   const basemap = allBasemaps.find((b) => b.id === basemapId) ?? allBasemaps[0]!;
-  const [layers, setLayers] = useState<LayerVisibility>({ sites: true, routes: true, cables: true });
+  const [layers, setLayers] = useState<LayerVisibility>({
+    sites: true,
+    routes: true,
+    cables: true,
+  });
   const [mode, setModeRaw] = useState<Mode>({ kind: "select" });
   // Актуальный режим для обработчиков, которые ждут ответа сервера.
   const modeRef = useRef(mode);
@@ -48,7 +60,11 @@ export function MapPage() {
   });
   const [traceView, setTraceView] = useState<TraceView | null>(null);
   const [focus, setFocus] = useState<{ at: LngLat } | null>(null);
-  const [chooser, setChooser] = useState<{ x: number; y: number; items: Candidate[] } | null>(null);
+  const [chooser, setChooser] = useState<{
+    x: number;
+    y: number;
+    items: Candidate[];
+  } | null>(null);
   const [cursorAt, setCursorAt] = useState<LngLat | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [layDialog, setLayDialog] = useState(false);
@@ -82,8 +98,16 @@ export function MapPage() {
     if (mode.kind === "select") {
       if (site) return setSelection({ type: "site", id: site.id });
       const items: Candidate[] = [
-        ...hit.routes.map((r) => ({ type: "route" as const, id: r.id, label: `Трасса: ${r.name || ROUTE_KIND_LABELS[r.kind]} · ${Math.round(r.lengthM)} м` })),
-        ...uniqueBy(hit.cables, (c) => c.cableId).map((c) => ({ type: "cable" as const, id: c.cableId, label: `Кабель: ${c.name || c.typeName}` })),
+        ...hit.routes.map((r) => ({
+          type: "route" as const,
+          id: r.id,
+          label: `Трасса: ${r.name || ROUTE_KIND_LABELS[r.kind]} · ${Math.round(r.lengthM)} м`,
+        })),
+        ...uniqueBy(hit.cables, (c) => c.cableId).map((c) => ({
+          type: "cable" as const,
+          id: c.cableId,
+          label: `Кабель: ${c.name || c.typeName}`,
+        })),
       ];
       if (items.length === 0) return setSelection(null);
       if (items.length === 1) return setSelection({ type: items[0]!.type, id: items[0]!.id });
@@ -92,9 +116,18 @@ export function MapPage() {
 
     if (mode.kind === "addSite") {
       // В режимах рисования панель не открываем: она сужает карту и мешает ставить точки подряд.
-      if (site) return setMode({ ...mode, lastSiteId: mode.chain ? site.id : null, lastSitePos: mode.chain ? (posOf(site.id) ?? null) : null });
+      if (site)
+        return setMode({
+          ...mode,
+          lastSiteId: mode.chain ? site.id : null,
+          lastSitePos: mode.chain ? (posOf(site.id) ?? null) : null,
+        });
       try {
-        const { id } = await createSite.mutateAsync({ kind: mode.siteKind, position: hit.lngLat, status: "planned" });
+        const { id } = await createSite.mutateAsync({
+          kind: mode.siteKind,
+          position: hit.lngLat,
+          status: "planned",
+        });
         const prev = mode.lastSitePos;
         if (mode.chain && mode.lastSiteId && prev) {
           await createRoute.mutateAsync({
@@ -105,7 +138,11 @@ export function MapPage() {
             status: "planned",
           });
         }
-        setMode({ ...mode, lastSiteId: mode.chain ? id : null, lastSitePos: mode.chain ? hit.lngLat : null });
+        setMode({
+          ...mode,
+          lastSiteId: mode.chain ? id : null,
+          lastSitePos: mode.chain ? hit.lngLat : null,
+        });
       } catch (e) {
         fail(e);
       }
@@ -115,7 +152,12 @@ export function MapPage() {
     if (mode.kind === "drawRoute") {
       if (!mode.fromSiteId) {
         if (!site) return flash("Трасса начинается от места — кликните по точке на карте.");
-        return setMode({ ...mode, fromSiteId: site.id, fromPos: posOf(site.id) ?? hit.lngLat, vertices: [] });
+        return setMode({
+          ...mode,
+          fromSiteId: site.id,
+          fromPos: posOf(site.id) ?? hit.lngLat,
+          vertices: [],
+        });
       }
       if (site) {
         if (site.id === mode.fromSiteId) return flash("Трасса должна закончиться в другом месте.");
@@ -128,7 +170,12 @@ export function MapPage() {
             status: "planned",
           });
           // Продолжаем рисовать от конечного места.
-          setMode({ ...mode, fromSiteId: site.id, fromPos: posOf(site.id) ?? hit.lngLat, vertices: [] });
+          setMode({
+            ...mode,
+            fromSiteId: site.id,
+            fromPos: posOf(site.id) ?? hit.lngLat,
+            vertices: [],
+          });
         } catch (e) {
           fail(e);
         }
@@ -141,7 +188,12 @@ export function MapPage() {
       if (!mode.cableTypeId) return flash("Сначала выберите тип кабеля на панели слева сверху.");
       if (!site) return flash("Кабель прокладывается от места к месту — кликните по точке.");
       const last = mode.siteIds[mode.siteIds.length - 1];
-      if (!last) return setMode({ ...mode, siteIds: [site.id], history: [{ sites: 0, routes: 0 }] });
+      if (!last)
+        return setMode({
+          ...mode,
+          siteIds: [site.id],
+          history: [{ sites: 0, routes: 0 }],
+        });
       if (last === site.id) return;
       try {
         const path = await findPath(last, site.id);
@@ -166,7 +218,13 @@ export function MapPage() {
       const k = e.key.toLowerCase();
       if (e.key === "Escape") {
         setChooser(null);
-        if (mode.kind === "drawRoute" && mode.fromSiteId) return setMode({ ...mode, fromSiteId: null, fromPos: null, vertices: [] });
+        if (mode.kind === "drawRoute" && mode.fromSiteId)
+          return setMode({
+            ...mode,
+            fromSiteId: null,
+            fromPos: null,
+            vertices: [],
+          });
         if (mode.kind === "addSite" && mode.lastSiteId) return setMode({ ...mode, lastSiteId: null, lastSitePos: null });
         if (mode.kind === "layCable" && mode.siteIds.length) return setMode({ ...mode, siteIds: [], routeIds: [], history: [] });
         if (mode.kind !== "select") return setMode({ kind: "select" });
@@ -188,9 +246,15 @@ export function MapPage() {
           });
         }
       }
-      if (e.key === "Enter" && mode.kind === "layCable" && mode.siteIds.length >= 2 && mode.cableTypeId) return setLayDialog(true);
+      if (e.key === "Enter" && mode.kind === "layCable" && mode.siteIds.length >= 2 && mode.cableTypeId)
+        return setLayDialog(true);
       if (e.ctrlKey || e.metaKey || e.altKey) return;
-      const byKey: Record<string, Mode["kind"]> = { v: "select", p: "addSite", r: "drawRoute", c: "layCable" };
+      const byKey: Record<string, Mode["kind"]> = {
+        v: "select",
+        p: "addSite",
+        r: "drawRoute",
+        c: "layCable",
+      };
       if (byKey[k] && byKey[k] !== mode.kind) setMode(initialMode(byKey[k], mode));
     };
     window.addEventListener("keydown", onKey);
@@ -207,29 +271,74 @@ export function MapPage() {
     if (mode.kind === "layCable") return fc(mode.routeIds.map((id) => routeById.get(id)).filter(Boolean) as Feature<Geometry>[]);
     if (selection?.type === "route") return fc(n.routes.features.filter((f) => f.properties.id === selection.id));
     if (selection?.type === "cable") return fc(n.cables.features.filter((f) => f.properties.cableId === selection.id));
-    if (selection?.type === "trace" && traceView) return fc(n.cables.features.filter((f) => traceView.spanIds.has(f.properties.id)));
+    if (selection?.type === "trace" && traceView)
+      return fc(n.cables.features.filter((f) => traceView.spanIds.has(f.properties.id)));
     return EMPTY;
   }, [net.data, selection, mode, routeById, traceView]);
 
   const draft = useMemo(() => {
     const pts = (ids: string[]) =>
-      ids.map((id) => sitePos.get(id)).filter(Boolean).map((c) => ({ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: c } }) as Feature<Geometry>);
+      ids
+        .map((id) => sitePos.get(id))
+        .filter(Boolean)
+        .map(
+          (c) =>
+            ({
+              type: "Feature",
+              properties: {},
+              geometry: { type: "Point", coordinates: c },
+            }) as Feature<Geometry>,
+        );
     if (mode.kind === "drawRoute" && mode.fromSiteId) {
       const start = mode.fromPos ?? sitePos.get(mode.fromSiteId);
       if (!start) return EMPTY;
       const coords = [start, ...mode.vertices, ...(cursorAt ? [cursorAt] : [])];
       return fc([
-        ...(coords.length > 1 ? [{ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: coords } } as Feature<Geometry>] : []),
-        { type: "Feature", properties: {}, geometry: { type: "Point", coordinates: start } } as Feature<Geometry>,
-        ...mode.vertices.map((c) => ({ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: c } }) as Feature<Geometry>),
+        ...(coords.length > 1
+          ? [
+              {
+                type: "Feature",
+                properties: {},
+                geometry: { type: "LineString", coordinates: coords },
+              } as Feature<Geometry>,
+            ]
+          : []),
+        {
+          type: "Feature",
+          properties: {},
+          geometry: { type: "Point", coordinates: start },
+        } as Feature<Geometry>,
+        ...mode.vertices.map(
+          (c) =>
+            ({
+              type: "Feature",
+              properties: {},
+              geometry: { type: "Point", coordinates: c },
+            }) as Feature<Geometry>,
+        ),
       ]);
     }
     if (mode.kind === "addSite" && mode.chain && mode.lastSiteId) {
       const start = mode.lastSitePos;
       if (!start) return EMPTY;
       return fc([
-        ...(cursorAt ? [{ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: [start, cursorAt] } } as Feature<Geometry>] : []),
-        { type: "Feature", properties: {}, geometry: { type: "Point", coordinates: start } } as Feature<Geometry>,
+        ...(cursorAt
+          ? [
+              {
+                type: "Feature",
+                properties: {},
+                geometry: {
+                  type: "LineString",
+                  coordinates: [start, cursorAt],
+                },
+              } as Feature<Geometry>,
+            ]
+          : []),
+        {
+          type: "Feature",
+          properties: {},
+          geometry: { type: "Point", coordinates: start },
+        } as Feature<Geometry>,
       ]);
     }
     if (mode.kind === "layCable") return fc(pts(mode.siteIds));
@@ -237,8 +346,10 @@ export function MapPage() {
     return EMPTY;
   }, [mode, sitePos, cursorAt, selection, traceView]);
 
-  const layLength = mode.kind === "layCable" ? mode.routeIds.reduce((s, id) => s + (routeById.get(id)?.properties.lengthM ?? 0), 0) : 0;
-  const wantsRubberBand = (mode.kind === "drawRoute" && !!mode.fromSiteId) || (mode.kind === "addSite" && mode.chain && !!mode.lastSiteId);
+  const layLength =
+    mode.kind === "layCable" ? mode.routeIds.reduce((s, id) => s + (routeById.get(id)?.properties.lengthM ?? 0), 0) : 0;
+  const wantsRubberBand =
+    (mode.kind === "drawRoute" && !!mode.fromSiteId) || (mode.kind === "addSite" && mode.chain && !!mode.lastSiteId);
 
   const onHover = (hit: MapHit | null) => {
     tooltip.current?.show(hit, net.data);
@@ -246,7 +357,13 @@ export function MapPage() {
   };
 
   const cursor =
-    mode.kind === "select" ? "" : mode.kind === "addSite" ? "crosshair" : mode.kind === "drawRoute" && mode.fromSiteId ? "crosshair" : "pointer";
+    mode.kind === "select"
+      ? ""
+      : mode.kind === "addSite"
+        ? "crosshair"
+        : mode.kind === "drawRoute" && mode.fromSiteId
+          ? "crosshair"
+          : "pointer";
 
   const closePanel = () => setSelection(null);
   const typeName = cableTypes.data?.find((t) => mode.kind === "layCable" && t.id === mode.cableTypeId)?.name ?? "";
@@ -263,7 +380,7 @@ export function MapPage() {
           highlight={highlight}
           draft={draft}
           cursor={cursor}
-          draggableSiteId={mode.kind === "select" && selection?.type === "site" ? selection.id : null}
+          draggableSiteId={canEdit && mode.kind === "select" && selection?.type === "site" ? selection.id : null}
           marker={selection?.type === "trace" ? (traceView?.marker ?? null) : null}
           focus={focus}
           onClick={onClick}
@@ -272,7 +389,11 @@ export function MapPage() {
         />
 
         <div className="pointer-events-none absolute inset-x-3 top-3 flex items-start justify-between gap-3">
-          <Toolbar mode={mode} setMode={setMode} layLengthM={layLength} onFinishCable={() => setLayDialog(true)} />
+          {canEdit ? (
+            <Toolbar mode={mode} setMode={setMode} layLengthM={layLength} onFinishCable={() => setLayDialog(true)} />
+          ) : (
+            <div />
+          )}
           <LayersControl
             layers={layers}
             setLayers={setLayers}
@@ -298,13 +419,18 @@ export function MapPage() {
               <Alert tone="info">Сеть пуста. Выберите режим «Место» и кликните по карте, чтобы поставить первую точку.</Alert>
             </div>
           )}
-          <div className="max-w-xl rounded-2xl bg-slate-900/80 px-3 py-1.5 text-center text-[11px] text-white shadow sm:px-4 sm:text-xs">{modeHint(mode)}</div>
+          <div className="max-w-xl rounded-2xl bg-slate-900/80 px-3 py-1.5 text-center text-[11px] text-white shadow sm:px-4 sm:text-xs">
+            {modeHint(mode)}
+          </div>
         </div>
 
         {chooser && (
           <div
             className="absolute z-10 w-72 rounded-lg border border-slate-200 bg-white py-1 shadow-lg"
-            style={{ left: Math.min(chooser.x + 8, window.innerWidth - 300), top: chooser.y + 8 }}
+            style={{
+              left: Math.min(chooser.x + 8, window.innerWidth - 300),
+              top: chooser.y + 8,
+            }}
             role="menu"
             aria-label="Что выбрать"
           >
@@ -331,9 +457,15 @@ export function MapPage() {
           className="z-10 max-h-[55vh] shrink-0 border-t border-slate-200 bg-white md:max-h-none md:w-96 md:border-t-0 md:border-l"
           aria-label="Свойства объекта"
         >
-          {selection.type === "site" && <SitePanel key={selection.id} id={selection.id} onClose={closePanel} onSelect={setSelection} />}
-          {selection.type === "route" && <RoutePanel key={selection.id} id={selection.id} onClose={closePanel} onSelect={setSelection} />}
-          {selection.type === "cable" && <CablePanel key={selection.id} id={selection.id} onClose={closePanel} onSelect={setSelection} />}
+          {selection.type === "site" && (
+            <SitePanel key={selection.id} id={selection.id} onClose={closePanel} onSelect={setSelection} />
+          )}
+          {selection.type === "route" && (
+            <RoutePanel key={selection.id} id={selection.id} onClose={closePanel} onSelect={setSelection} />
+          )}
+          {selection.type === "cable" && (
+            <CablePanel key={selection.id} id={selection.id} onClose={closePanel} onSelect={setSelection} />
+          )}
           {selection.type === "trace" && (
             <TracePanel
               key={selection.id}
@@ -432,20 +564,36 @@ interface TooltipHandle {
 
 /** Подсказка живёт своим состоянием, чтобы движение мыши не перерисовывало страницу. */
 function Tooltip({ ref }: { ref: RefObject<TooltipHandle | null> }) {
-  const [tip, setTip] = useState<{ x: number; y: number; text: string; sub?: string } | null>(null);
+  const [tip, setTip] = useState<{
+    x: number;
+    y: number;
+    text: string;
+    sub?: string;
+  } | null>(null);
   ref.current = {
     show: (hit) => {
       if (!hit) return setTip(null);
       const s = hit.sites[0];
       const r = hit.routes[0];
       const c = hit.cables[0];
-      if (s) return setTip({ x: hit.point.x, y: hit.point.y, text: s.name || SITE_KIND_LABELS[s.kind], sub: s.name ? SITE_KIND_LABELS[s.kind] : undefined });
+      if (s)
+        return setTip({
+          x: hit.point.x,
+          y: hit.point.y,
+          text: s.name || SITE_KIND_LABELS[s.kind],
+          sub: s.name ? SITE_KIND_LABELS[s.kind] : undefined,
+        });
       if (r || c) {
         const parts = [
           r && `${ROUTE_KIND_LABELS[r.kind]} · ${Math.round(r.lengthM)} м`,
           ...uniqueBy(hit.cables, (x) => x.cableId).map((x) => `${x.name || x.typeName} (${x.fiberCount} вол.)`),
         ].filter(Boolean) as string[];
-        return setTip({ x: hit.point.x, y: hit.point.y, text: parts[0]!, sub: parts.slice(1).join(", ") || undefined });
+        return setTip({
+          x: hit.point.x,
+          y: hit.point.y,
+          text: parts[0]!,
+          sub: parts.slice(1).join(", ") || undefined,
+        });
       }
       setTip(null);
     },

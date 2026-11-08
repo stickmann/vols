@@ -50,22 +50,14 @@ git checkout "$(. deploy/release.sh && latest_release)"
 
 ## 3. Настройки `.env.prod`
 
-Хэш пароля для входа на сайт (вместо `пароль` — свой; хэш понадобится ниже):
-
-```bash
-docker run --rm caddy:2.10-alpine caddy hash-password --plaintext 'пароль'
-```
-
-Создайте файл, подставив домен, логин и полученный хэш (`$2a$14$...`). Пароли базы генерируются автоматически:
+Создайте файл, подставив домен. Пароли базы генерируются автоматически:
 
 ```bash
 cat > .env.prod <<EOF
 SITE_ADDRESS='vols.example.ru'
 POSTGRES_PASSWORD='$(openssl rand -hex 24)'
 VOLS_APP_PASSWORD='$(openssl rand -hex 24)'
-BASIC_AUTH_USER='admin'
-BASIC_AUTH_HASH='ВСТАВЬТЕ_ХЭШ'
-ALLOW_TENANT_HEADER='true'
+ALLOW_TENANT_HEADER='false'
 VOLS_VERSION='$(git describe --tags --always)'
 VITE_MAP_STYLE=''
 VITE_SATELLITE_TILES=''
@@ -110,6 +102,14 @@ dc run --rm api node dist/migrate.js
 ```bash
 dc run --rm api node dist/seed.js
 ```
+
+Первый администратор — владелец всех операторов установки. Пароль передаётся через stdin, чтобы не попасть в историю команд (вместо значений — свои):
+
+```bash
+read -rsp "Пароль администратора: " P; echo; printf '%s' "$P" | dc run --rm -T api node dist/create-admin.js --email admin@example.ru --name "Имя Фамилия"; unset P
+```
+
+Той же командой можно задать новый пароль администратору, если он его забыл. Остальных сотрудников администратор приглашает на сайте: «Пользователи» → «Пригласить».
 
 Проверка — все три контейнера в состоянии `running` / `healthy`:
 

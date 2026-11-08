@@ -1,3 +1,4 @@
+import { useCan } from "../../auth/api.js";
 import { objectStatuses, routeKinds, siteKinds, type ObjectStatus } from "@vols/shared";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router";
@@ -20,7 +21,17 @@ type Select_ = (s: Selection) => void;
 
 const fmtLen = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(2)} км` : `${Math.round(m)} м`);
 
-export function PanelShell({ title, subtitle, onClose, children }: { title: string; subtitle?: ReactNode; onClose: () => void; children: ReactNode }) {
+export function PanelShell({
+  title,
+  subtitle,
+  onClose,
+  children,
+}: {
+  title: string;
+  subtitle?: ReactNode;
+  onClose: () => void;
+  children: ReactNode;
+}) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-start gap-2 border-b border-slate-200 px-4 py-3">
@@ -65,20 +76,22 @@ function StatusSelect({ value, onChange }: { value: ObjectStatus; onChange: (v: 
 function useFormDraft<T extends object>(source: T | undefined) {
   const [draft, setDraft] = useState<T | undefined>(source);
   const key = JSON.stringify(source);
+  const canEdit = useCan("designer");
   useEffect(() => setDraft(source), [key]); // eslint-disable-line react-hooks/exhaustive-deps
-  const dirty = !!draft && JSON.stringify(draft) !== key;
+  // Без роли инженера изменения не сохраняются — кнопки «Сохранить» нет.
+  const dirty = canEdit && !!draft && JSON.stringify(draft) !== key;
   const set = <K extends keyof T>(k: K, v: T[K]) => setDraft((d) => (d ? { ...d, [k]: v } : d));
   return { draft, set, dirty, reset: () => setDraft(source) };
 }
 
 function RemoveButton({ label, onClick }: { label: string; onClick: () => void }) {
+  if (!useCan("designer")) return null;
   return (
     <Button size="sm" variant="ghost" className="text-red-600 hover:bg-red-50" onClick={onClick}>
       {label}
     </Button>
   );
 }
-
 
 function MutationError({ error }: { error: Error | null }) {
   return error ? <Alert>{error.message}</Alert> : null;
@@ -103,8 +116,18 @@ export function SitePanel({ id, onClose, onSelect }: { id: string; onClose: () =
   );
   const f = useFormDraft(src);
 
-  if (q.isPending) return <PanelShell title="Загрузка…" onClose={onClose}>{null}</PanelShell>;
-  if (q.isError || !f.draft) return <PanelShell title="Место" onClose={onClose}><Alert>{q.error?.message ?? "Не найдено"}</Alert></PanelShell>;
+  if (q.isPending)
+    return (
+      <PanelShell title="Загрузка…" onClose={onClose}>
+        {null}
+      </PanelShell>
+    );
+  if (q.isError || !f.draft)
+    return (
+      <PanelShell title="Место" onClose={onClose}>
+        <Alert>{q.error?.message ?? "Не найдено"}</Alert>
+      </PanelShell>
+    );
   const d = f.draft;
   const s = q.data!;
 
@@ -144,7 +167,16 @@ export function SitePanel({ id, onClose, onSelect }: { id: string; onClose: () =
             variant="primary"
             size="sm"
             disabled={update.isPending}
-            onClick={() => update.mutate({ id, kind: d.kind, status: d.status, name: d.name || null, address: d.address || null, notes: d.notes || null })}
+            onClick={() =>
+              update.mutate({
+                id,
+                kind: d.kind,
+                status: d.status,
+                name: d.name || null,
+                address: d.address || null,
+                notes: d.notes || null,
+              })
+            }
           >
             Сохранить
           </Button>
@@ -164,7 +196,10 @@ export function SitePanel({ id, onClose, onSelect }: { id: string; onClose: () =
           <ul className="space-y-1">
             {s.cables.map((c) => (
               <li key={c.id}>
-                <button className="flex w-full items-center gap-2 rounded px-1 py-1 text-left text-sm hover:bg-slate-50" onClick={() => onSelect({ type: "cable", id: c.id })}>
+                <button
+                  className="flex w-full items-center gap-2 rounded px-1 py-1 text-left text-sm hover:bg-slate-50"
+                  onClick={() => onSelect({ type: "cable", id: c.id })}
+                >
                   <span className="min-w-0 flex-1 truncate">{c.name || c.typeName}</span>
                   <Badge tone={c.role === "end" ? "brand" : "slate"}>{c.role === "end" ? "конец" : "проходит"}</Badge>
                 </button>
@@ -186,6 +221,7 @@ function EquipmentSection({ site, onTrace }: { site: SiteDetails; onTrace: (term
   const models = useEquipmentModels();
   const create = useCreateEquipment();
   const [removing, setRemoving] = useState<string | null>(null);
+  const canEdit = useCan("designer");
   const [adding, setAdding] = useState(false);
   const [kind, setKind] = useState("closure");
   const [modelId, setModelId] = useState("");
@@ -221,18 +257,22 @@ function EquipmentSection({ site, onTrace }: { site: SiteDetails; onTrace: (term
             Разварка
           </Link>
         )}
-        <button
-          className="rounded px-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
-          title="Удалить оборудование"
-          aria-label={`Удалить ${e.name || EQUIPMENT_KIND_LABELS[e.kind]}`}
-          onClick={() => setRemoving(e.id)}
-        >
-          ✕
-        </button>
+        {canEdit && (
+          <button
+            className="rounded px-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
+            title="Удалить оборудование"
+            aria-label={`Удалить ${e.name || EQUIPMENT_KIND_LABELS[e.kind]}`}
+            onClick={() => setRemoving(e.id)}
+          >
+            ✕
+          </button>
+        )}
       </li>
       {e.tracePorts.length > 0 && (
         <li className="flex flex-wrap items-center gap-1 pb-2" style={{ paddingLeft: depth * 16 }}>
-          <span className="mr-1 text-xs text-slate-500">{e.kind === "olt" || e.kind === "onu" ? "Трасса от PON:" : "Трасса от порта:"}</span>
+          <span className="mr-1 text-xs text-slate-500">
+            {e.kind === "olt" || e.kind === "onu" ? "Трасса от PON:" : "Трасса от порта:"}
+          </span>
           {e.tracePorts.map((p) => (
             <button
               key={p.terminalId}
@@ -258,7 +298,8 @@ function EquipmentSection({ site, onTrace }: { site: SiteDetails; onTrace: (term
     <Section
       title={`Оборудование (${site.equipment.length})`}
       action={
-        !adding && (
+        !adding &&
+        canEdit && (
           <Button size="sm" variant="ghost" onClick={() => setAdding(true)}>
             + Добавить
           </Button>
@@ -317,7 +358,13 @@ function EquipmentSection({ site, onTrace }: { site: SiteDetails; onTrace: (term
               disabled={!modelId || create.isPending}
               onClick={() =>
                 create.mutate(
-                  { siteId: site.id, modelId, name: name || null, parentId: parentId || null, status: site.status },
+                  {
+                    siteId: site.id,
+                    modelId,
+                    name: name || null,
+                    parentId: parentId || null,
+                    status: site.status,
+                  },
                   { onSuccess: () => (setAdding(false), setName("")) },
                 )
               }
@@ -341,19 +388,39 @@ export function RoutePanel({ id, onClose, onSelect }: { id: string; onClose: () 
   const update = useUpdateRoute();
   const [removing, setRemoving] = useState(false);
   const src = useMemo(
-    () => q.data && { kind: q.data.kind, name: q.data.name ?? "", status: q.data.status, notes: q.data.notes ?? "" },
+    () =>
+      q.data && {
+        kind: q.data.kind,
+        name: q.data.name ?? "",
+        status: q.data.status,
+        notes: q.data.notes ?? "",
+      },
     [q.data],
   );
   const f = useFormDraft(src);
 
-  if (q.isPending) return <PanelShell title="Загрузка…" onClose={onClose}>{null}</PanelShell>;
-  if (q.isError || !f.draft) return <PanelShell title="Трасса" onClose={onClose}><Alert>{q.error?.message ?? "Не найдено"}</Alert></PanelShell>;
+  if (q.isPending)
+    return (
+      <PanelShell title="Загрузка…" onClose={onClose}>
+        {null}
+      </PanelShell>
+    );
+  if (q.isError || !f.draft)
+    return (
+      <PanelShell title="Трасса" onClose={onClose}>
+        <Alert>{q.error?.message ?? "Не найдено"}</Alert>
+      </PanelShell>
+    );
   const r = q.data!;
   const d = f.draft;
   const siteName = (name: string | null, kind: keyof typeof SITE_KIND_LABELS) => name || SITE_KIND_LABELS[kind];
 
   return (
-    <PanelShell title={r.name || `Трасса: ${ROUTE_KIND_LABELS[r.kind]}`} subtitle={`Длина ${fmtLen(r.lengthM)}`} onClose={onClose}>
+    <PanelShell
+      title={r.name || `Трасса: ${ROUTE_KIND_LABELS[r.kind]}`}
+      subtitle={`Длина ${fmtLen(r.lengthM)}`}
+      onClose={onClose}
+    >
       <div className="flex flex-wrap items-center gap-1 text-sm">
         <button className="text-brand-700 hover:underline" onClick={() => onSelect({ type: "site", id: r.fromSiteId })}>
           {siteName(r.fromName, r.fromKind)}
@@ -390,7 +457,15 @@ export function RoutePanel({ id, onClose, onSelect }: { id: string; onClose: () 
             size="sm"
             variant="primary"
             disabled={update.isPending}
-            onClick={() => update.mutate({ id, kind: d.kind, status: d.status, name: d.name || null, notes: d.notes || null })}
+            onClick={() =>
+              update.mutate({
+                id,
+                kind: d.kind,
+                status: d.status,
+                name: d.name || null,
+                notes: d.notes || null,
+              })
+            }
           >
             Сохранить
           </Button>
@@ -407,7 +482,10 @@ export function RoutePanel({ id, onClose, onSelect }: { id: string; onClose: () 
           <ul className="space-y-1">
             {r.cables.map((c) => (
               <li key={c.id}>
-                <button className="w-full truncate rounded px-1 py-1 text-left text-sm hover:bg-slate-50" onClick={() => onSelect({ type: "cable", id: c.id })}>
+                <button
+                  className="w-full truncate rounded px-1 py-1 text-left text-sm hover:bg-slate-50"
+                  onClick={() => onSelect({ type: "cable", id: c.id })}
+                >
                   {c.name || "Без названия"} <span className="text-slate-500">· {c.typeName}</span>
                 </button>
               </li>
@@ -434,11 +512,29 @@ export function CablePanel({ id, onClose, onSelect }: { id: string; onClose: () 
   const last = q.data?.spans[q.data.spans.length - 1];
   const fromSite = useSite(first?.fromSiteId ?? null);
   const toSite = useSite(last?.toSiteId ?? null);
-  const src = useMemo(() => q.data && { name: q.data.name ?? "", status: q.data.status, notes: q.data.notes ?? "" }, [q.data]);
+  const src = useMemo(
+    () =>
+      q.data && {
+        name: q.data.name ?? "",
+        status: q.data.status,
+        notes: q.data.notes ?? "",
+      },
+    [q.data],
+  );
   const f = useFormDraft(src);
 
-  if (q.isPending) return <PanelShell title="Загрузка…" onClose={onClose}>{null}</PanelShell>;
-  if (q.isError || !f.draft) return <PanelShell title="Кабель" onClose={onClose}><Alert>{q.error?.message ?? "Не найдено"}</Alert></PanelShell>;
+  if (q.isPending)
+    return (
+      <PanelShell title="Загрузка…" onClose={onClose}>
+        {null}
+      </PanelShell>
+    );
+  if (q.isError || !f.draft)
+    return (
+      <PanelShell title="Кабель" onClose={onClose}>
+        <Alert>{q.error?.message ?? "Не найдено"}</Alert>
+      </PanelShell>
+    );
   const c = q.data!;
   const d = f.draft;
   const length = c.spans.reduce((s, sp) => s + sp.routeLengthM + sp.slackM, 0);
@@ -451,17 +547,26 @@ export function CablePanel({ id, onClose, onSelect }: { id: string; onClose: () 
     const site = end === "from" ? fromSite.data : toSite.data;
     const value = (end === "from" ? sp.fromEquipmentId : sp.toEquipmentId) ?? "";
     const siteId = end === "from" ? sp.fromSiteId : sp.toSiteId;
-    const siteName = (end === "from" ? sp.fromSiteName : sp.toSiteName) || SITE_KIND_LABELS[end === "from" ? sp.fromSiteKind : sp.toSiteKind];
+    const siteName =
+      (end === "from" ? sp.fromSiteName : sp.toSiteName) || SITE_KIND_LABELS[end === "from" ? sp.fromSiteKind : sp.toSiteKind];
     return (
       <div className="rounded-lg border border-slate-200 p-2">
-        <button className="text-sm font-medium text-brand-700 hover:underline" onClick={() => onSelect({ type: "site", id: siteId })}>
+        <button
+          className="text-sm font-medium text-brand-700 hover:underline"
+          onClick={() => onSelect({ type: "site", id: siteId })}
+        >
           {end === "from" ? "Начало" : "Конец"}: {siteName}
         </button>
         <Select
           className="mt-1 h-8"
           value={value}
           aria-label={end === "from" ? "Оборудование в начале" : "Оборудование в конце"}
-          onChange={(e) => update.mutate({ id, [end === "from" ? "fromEquipmentId" : "toEquipmentId"]: e.target.value || null })}
+          onChange={(e) =>
+            update.mutate({
+              id,
+              [end === "from" ? "fromEquipmentId" : "toEquipmentId"]: e.target.value || null,
+            })
+          }
         >
           <option value="">— не заведён в оборудование —</option>
           {terminating(site).map((e) => (
@@ -475,7 +580,11 @@ export function CablePanel({ id, onClose, onSelect }: { id: string; onClose: () 
   };
 
   return (
-    <PanelShell title={c.name || c.typeName} subtitle={`${c.typeName} · ${c.fiberCount} вол. · ${fmtLen(length)}`} onClose={onClose}>
+    <PanelShell
+      title={c.name || c.typeName}
+      subtitle={`${c.typeName} · ${c.fiberCount} вол. · ${fmtLen(length)}`}
+      onClose={onClose}
+    >
       <div className="grid grid-cols-2 gap-3">
         <Field label="Название" className="col-span-2">
           <Input value={d.name} onChange={(e) => f.set("name", e.target.value)} placeholder="Магистраль УС1–М1" />
@@ -500,7 +609,14 @@ export function CablePanel({ id, onClose, onSelect }: { id: string; onClose: () 
             size="sm"
             variant="primary"
             disabled={update.isPending}
-            onClick={() => update.mutate({ id, name: d.name || null, status: d.status, notes: d.notes || null })}
+            onClick={() =>
+              update.mutate({
+                id,
+                name: d.name || null,
+                status: d.status,
+                notes: d.notes || null,
+              })
+            }
           >
             Сохранить
           </Button>

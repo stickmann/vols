@@ -1,3 +1,4 @@
+import { useCan } from "../auth/api.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { ColorChip } from "../../components/ColorChip.js";
@@ -47,6 +48,8 @@ export function SplicingPage() {
 }
 
 function Editor({ data }: { data: SplicingData }) {
+  const canSplice = useCan("technician");
+  const canEdit = useCan("designer");
   const eq = data.equipment;
   const connect = useConnect(eq.id);
   const disconnect = useDisconnect(eq.id);
@@ -97,52 +100,74 @@ function Editor({ data }: { data: SplicingData }) {
       return;
     }
     setSelectedConn(null);
+    if (!canSplice) return;
     if (!pending) return setPending(tid);
     if (pending === tid) return setPending(null);
     connect.mutate(
       { aTerminalId: pending, bTerminalId: tid },
-      { onSuccess: () => setPending(null), onError: (e) => (setError(e.message), setPending(null)) },
+      {
+        onSuccess: () => setPending(null),
+        onError: (e) => (setError(e.message), setPending(null)),
+      },
     );
   };
 
-  const ctx: DiagramCtx = { byTerminal, index, pending, selectedConn, onTerminal };
+  const ctx: DiagramCtx = {
+    byTerminal,
+    index,
+    pending,
+    selectedConn,
+    onTerminal,
+  };
   const selected = data.connections.find((c) => c.id === selectedConn) ?? null;
 
   // Транзитный кабель разрезан в корпусе: он заведён дважды (приход и уход).
   const isTransit = (c: CableIn) => data.cables.filter((x) => x.cableId === c.cableId).length > 1;
 
   const throughOf = (c: CableIn) =>
-    (c.fibers ?? [])
-      .map((f) => byTerminal.get(f.terminalId))
-      .filter((x): x is Conn => !!x && x.kind === "through");
+    (c.fibers ?? []).map((f) => byTerminal.get(f.terminalId)).filter((x): x is Conn => !!x && x.kind === "through");
 
   const cableActions = (c: CableIn) => {
     const through = throughOf(c);
     const busy = (c.fibers ?? []).some((f) => byTerminal.has(f.terminalId));
     return (
       <>
-        {through.length > 0 && (
+        {canSplice && through.length > 0 && (
           <Button
             size="sm"
             variant="ghost"
             title="Разрезать все транзитные волокна кабеля, чтобы развести их"
-            onClick={() => disconnectMany.mutate(through.map((t) => t.id), { onError: (e) => setError(e.message) })}
+            onClick={() =>
+              disconnectMany.mutate(
+                through.map((t) => t.id),
+                { onError: (e) => setError(e.message) },
+              )
+            }
           >
             ✂ транзит ({through.length})
           </Button>
         )}
-        <Button size="sm" variant="ghost" title="Перенести на другую сторону схемы" onClick={() => setSwapped((p) => toggle(p, c.spanId))}>
-          ⇄
-        </Button>
         <Button
           size="sm"
           variant="ghost"
-          title="Вывести кабель из корпуса"
-          aria-label={`Вывести кабель ${cableLabel(c)} из корпуса`}
-          onClick={() => (busy || isTransit(c) ? setLeaving(c) : leave.mutate({ spanId: c.spanId }, { onError: (e) => setError(e.message) }))}
+          title="Перенести на другую сторону схемы"
+          onClick={() => setSwapped((p) => toggle(p, c.spanId))}
         >
-          ✕
+          ⇄
         </Button>
+        {canSplice && (
+          <Button
+            size="sm"
+            variant="ghost"
+            title="Вывести кабель из корпуса"
+            aria-label={`Вывести кабель ${cableLabel(c)} из корпуса`}
+            onClick={() =>
+              busy || isTransit(c) ? setLeaving(c) : leave.mutate({ spanId: c.spanId }, { onError: (e) => setError(e.message) })
+            }
+          >
+            ✕
+          </Button>
+        )}
       </>
     );
   };
@@ -181,9 +206,7 @@ function Editor({ data }: { data: SplicingData }) {
       </nav>
       <div className="mb-4 flex flex-wrap items-end gap-3">
         <div className="mr-auto">
-          <h1 className="text-xl font-semibold">
-            Разварка: {eq.name || EQUIPMENT_KIND_LABELS[eq.kind]}
-          </h1>
+          <h1 className="text-xl font-semibold">Разварка: {eq.name || EQUIPMENT_KIND_LABELS[eq.kind]}</h1>
           <p className="text-sm text-slate-500">
             {EQUIPMENT_KIND_LABELS[eq.kind]} · {eq.modelName}
           </p>
@@ -202,26 +225,42 @@ function Editor({ data }: { data: SplicingData }) {
       </div>
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <EnterCableMenu data={data} onError={setError} />
-        <Button onClick={() => setBatchOpen(true)} disabled={data.cables.length === 0}>
-          Сварить по порядку…
-        </Button>
+        {canSplice && <EnterCableMenu data={data} onError={setError} />}
+        {canSplice && (
+          <Button onClick={() => setBatchOpen(true)} disabled={data.cables.length === 0}>
+            Сварить по порядку…
+          </Button>
+        )}
         <DownloadButton path={`/equipment/${eq.id}/passport.pdf`} filename="Паспорт.pdf">
           Паспорт PDF
         </DownloadButton>
-        <Button onClick={() => setClearOpen(true)} disabled={s.splices + s.patches === 0}>
-          Очистить разварку…
-        </Button>
-        <Button variant="ghost" className="text-red-600 hover:bg-red-50" onClick={() => setRemoveOpen(true)}>
-          Удалить {({ closure: "муфту", terminal_box: "ящик", odf: "кросс" } as Record<string, string>)[eq.kind] ?? "корпус"}…
-        </Button>
+        {canSplice && (
+          <Button onClick={() => setClearOpen(true)} disabled={s.splices + s.patches === 0}>
+            Очистить разварку…
+          </Button>
+        )}
+        {canEdit && (
+          <Button variant="ghost" className="text-red-600 hover:bg-red-50" onClick={() => setRemoveOpen(true)}>
+            Удалить{" "}
+            {(
+              {
+                closure: "муфту",
+                terminal_box: "ящик",
+                odf: "кросс",
+              } as Record<string, string>
+            )[eq.kind] ?? "корпус"}
+            …
+          </Button>
+        )}
         <Button variant="ghost" onClick={() => setShowTable((v) => !v)} aria-expanded={showTable}>
           {showTable ? "Скрыть таблицу" : "Таблица соединений"}
         </Button>
         <span className="text-sm text-slate-500">
-          {pending
-            ? `Выбрано: ${index.get(pending)?.label}. Кликните вторую точку, Esc — отмена.`
-            : "Кликните свободное волокно или порт, затем второе — появится сварка. Клик по занятому покажет соединение."}
+          {!canSplice
+            ? "Только просмотр. Клик по занятому волокну или порту покажет соединение."
+            : pending
+              ? `Выбрано: ${index.get(pending)?.label}. Кликните вторую точку, Esc — отмена.`
+              : "Кликните свободное волокно или порт, затем второе — появится сварка. Клик по занятому покажет соединение."}
         </span>
         {pending && (
           <Link to={`/map?trace=${pending}`} className="text-sm font-medium text-brand-700 hover:underline">
@@ -236,7 +275,9 @@ function Editor({ data }: { data: SplicingData }) {
         </div>
       )}
 
-      {showTable && <ConnectionsTable connections={data.connections} index={index} onSelect={setSelectedConn} selected={selectedConn} />}
+      {showTable && (
+        <ConnectionsTable connections={data.connections} index={index} onSelect={setSelectedConn} selected={selectedConn} />
+      )}
 
       {data.cables.length === 0 && inner.length === 0 ? (
         <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
@@ -250,7 +291,9 @@ function Editor({ data }: { data: SplicingData }) {
               {inner.map((d) => (
                 <DeviceBlock key={d.id} device={d} ctx={ctx} />
               ))}
-              {container && <DeviceBlock device={container} ctx={ctx} title={`Порты ${EQUIPMENT_KIND_LABELS[eq.kind]?.toLowerCase()}`} />}
+              {container && (
+                <DeviceBlock device={container} ctx={ctx} title={`Порты ${EQUIPMENT_KIND_LABELS[eq.kind]?.toLowerCase()}`} />
+              )}
               {inner.length === 0 && !container?.ports?.length && (
                 <div className="rounded-lg border border-dashed border-slate-300 p-4 text-center text-xs text-slate-400">
                   Сплиттеров нет. Добавить сплиттер в муфту можно в панели места на карте.
@@ -278,7 +321,10 @@ function Editor({ data }: { data: SplicingData }) {
           index={index}
           onClose={() => setSelectedConn(null)}
           onDelete={() =>
-            disconnect.mutate(selected.id, { onSuccess: () => setSelectedConn(null), onError: (e) => setError(e.message) })
+            disconnect.mutate(selected.id, {
+              onSuccess: () => setSelectedConn(null),
+              onError: (e) => setError(e.message),
+            })
           }
         />
       )}
@@ -286,7 +332,12 @@ function Editor({ data }: { data: SplicingData }) {
       <BatchDialog open={batchOpen} onClose={() => setBatchOpen(false)} data={data} busy={byTerminal} />
       <ClearDialog open={clearOpen} onClose={() => setClearOpen(false)} data={data} />
       <LeaveDialog cable={leaving} data={data} onClose={() => setLeaving(null)} />
-      <RemoveDialog kind="equipment" id={removeOpen ? eq.id : null} onClose={() => setRemoveOpen(false)} onRemoved={() => navigate(`/map?site=${eq.siteId}`)} />
+      <RemoveDialog
+        kind="equipment"
+        id={removeOpen ? eq.id : null}
+        onClose={() => setRemoveOpen(false)}
+        onRemoved={() => navigate(`/map?site=${eq.siteId}`)}
+      />
     </div>
   );
 }
@@ -329,7 +380,10 @@ function EnterCableMenu({ data, onError }: { data: SplicingData; onError: (m: st
                 role="menuitem"
                 className="block w-full px-3 py-2 text-left text-sm hover:bg-slate-50"
                 onClick={() =>
-                  enter.mutate(c.spanId, { onSuccess: () => setOpen(false), onError: (e) => (onError(e.message), setOpen(false)) })
+                  enter.mutate(c.spanId, {
+                    onSuccess: () => setOpen(false),
+                    onError: (e) => (onError(e.message), setOpen(false)),
+                  })
                 }
               >
                 <span className="font-medium">{c.name || c.typeName}</span>
@@ -362,6 +416,7 @@ function ConnectionCard({
   onClose: () => void;
   onDelete: () => void;
 }) {
+  const canSplice = useCan("technician");
   const update = useUpdateConnection(equipmentId);
   const navigate = useNavigate();
   const [kind, setKind] = useState(conn.kind);
@@ -381,7 +436,11 @@ function ConnectionCard({
   );
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white shadow-[0_-4px_16px_rgba(0,0,0,0.06)]" role="region" aria-label="Соединение">
+    <div
+      className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white shadow-[0_-4px_16px_rgba(0,0,0,0.06)]"
+      role="region"
+      aria-label="Соединение"
+    >
       <div className="mx-auto flex max-w-[1400px] flex-wrap items-end gap-3 px-4 py-3 md:px-6">
         <div className="min-w-0 flex-1 basis-72 text-sm">
           <div className="mb-1 text-xs font-semibold text-slate-500 uppercase">{KIND_LABELS[conn.kind]}</div>
@@ -392,52 +451,69 @@ function ConnectionCard({
           </div>
         </div>
         {isThrough ? (
-          <p className="max-w-sm text-sm text-slate-600">Волокно проходит муфту не разрезанным. Чтобы развести его, разрежьте транзит.</p>
+          <p className="max-w-sm text-sm text-slate-600">
+            Волокно проходит муфту не разрезанным. Чтобы развести его, разрежьте транзит.
+          </p>
         ) : (
           <>
-            <Field label="Вид" className="w-44">
-              <Select value={kind} onChange={(e) => setKind(e.target.value as Conn["kind"])}>
-                <option value="fusion">Сварка</option>
-                <option value="mechanical">Механический сплайс</option>
-                <option value="patch">Патч-корд</option>
-              </Select>
-            </Field>
-            <Field label="Потери, дБ" className="w-28">
-              <Input inputMode="decimal" value={loss} onChange={(e) => setLoss(e.target.value)} placeholder={String(TYPICAL_LOSS[kind] ?? "")} />
-            </Field>
-            <Field label="Кассета" className="w-20">
-              <Input inputMode="numeric" value={tray} onChange={(e) => setTray(e.target.value)} />
-            </Field>
-            <Field label="Место" className="w-20">
-              <Input inputMode="numeric" value={slot} onChange={(e) => setSlot(e.target.value)} />
-            </Field>
-            <Button
-              variant="primary"
-              disabled={update.isPending}
-              onClick={() =>
-                update.mutate({
-                  id: conn.id,
-                  kind: kind as "fusion" | "mechanical" | "patch",
-                  lossDb: num(loss),
-                  trayNo: num(tray),
-                  slotNo: num(slot),
-                })
-              }
-            >
-              Сохранить
-            </Button>
+            <fieldset disabled={!canSplice} className="contents">
+              <Field label="Вид" className="w-44">
+                <Select value={kind} onChange={(e) => setKind(e.target.value as Conn["kind"])}>
+                  <option value="fusion">Сварка</option>
+                  <option value="mechanical">Механический сплайс</option>
+                  <option value="patch">Патч-корд</option>
+                </Select>
+              </Field>
+              <Field label="Потери, дБ" className="w-28">
+                <Input
+                  inputMode="decimal"
+                  value={loss}
+                  onChange={(e) => setLoss(e.target.value)}
+                  placeholder={String(TYPICAL_LOSS[kind] ?? "")}
+                />
+              </Field>
+              <Field label="Кассета" className="w-20">
+                <Input inputMode="numeric" value={tray} onChange={(e) => setTray(e.target.value)} />
+              </Field>
+              <Field label="Место" className="w-20">
+                <Input inputMode="numeric" value={slot} onChange={(e) => setSlot(e.target.value)} />
+              </Field>
+            </fieldset>
+            {canSplice && (
+              <Button
+                variant="primary"
+                disabled={update.isPending}
+                onClick={() =>
+                  update.mutate({
+                    id: conn.id,
+                    kind: kind as "fusion" | "mechanical" | "patch",
+                    lossDb: num(loss),
+                    trayNo: num(tray),
+                    slotNo: num(slot),
+                  })
+                }
+              >
+                Сохранить
+              </Button>
+            )}
           </>
         )}
         <Button onClick={() => navigate(`/map?trace=${conn.aTerminalId}`)} title="Показать трассу на карте и посчитать затухание">
           Трассировать
         </Button>
-        <Button variant="danger" onClick={onDelete}>
-          {isThrough ? "✂ Разрезать" : "Удалить"}
-        </Button>
+        {canSplice && (
+          <Button variant="danger" onClick={onDelete}>
+            {isThrough ? "✂ Разрезать" : "Удалить"}
+          </Button>
+        )}
         <Button variant="ghost" onClick={onClose} aria-label="Закрыть">
           ✕
         </Button>
-        {update.error && <div className="basis-full"><Alert>{update.error.message}</Alert></div>}
+        {update.error && (
+          <div className="basis-full">
+            <Alert>{update.error.message}</Alert>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -509,7 +585,17 @@ function ConnectionsTable({
 
 // ---------------------------------------------------------------- сварка по порядку
 
-function BatchDialog({ open, onClose, data, busy }: { open: boolean; onClose: () => void; data: SplicingData; busy: Map<string, Conn> }) {
+function BatchDialog({
+  open,
+  onClose,
+  data,
+  busy,
+}: {
+  open: boolean;
+  onClose: () => void;
+  data: SplicingData;
+  busy: Map<string, Conn>;
+}) {
   const batch = useConnectBatch(data.equipment.id);
   const seqs = useMemo(() => sequences(data), [data]);
   const [fromId, setFromId] = useState("");
@@ -545,7 +631,13 @@ function BatchDialog({ open, onClose, data, busy }: { open: boolean; onClose: ()
             disabled={ok.length === 0 || batch.isPending}
             onClick={() =>
               batch.mutate(
-                { pairs: ok.map((p) => ({ aTerminalId: p.a.id, bTerminalId: p.b.id })), trayNo: tray.trim() ? Number(tray) : null },
+                {
+                  pairs: ok.map((p) => ({
+                    aTerminalId: p.a.id,
+                    bTerminalId: p.b.id,
+                  })),
+                  trayNo: tray.trim() ? Number(tray) : null,
+                },
                 { onSuccess: onClose },
               )
             }
@@ -573,7 +665,13 @@ function BatchDialog({ open, onClose, data, busy }: { open: boolean; onClose: ()
         {pairs.length > 0 && (
           <div className="max-h-56 overflow-auto rounded-md border border-slate-200 text-sm">
             {pairs.map((p, i) => (
-              <div key={i} className={cx("flex justify-between gap-2 border-b border-slate-100 px-3 py-1 last:border-0", p.busy && "text-slate-400 line-through")}>
+              <div
+                key={i}
+                className={cx(
+                  "flex justify-between gap-2 border-b border-slate-100 px-3 py-1 last:border-0",
+                  p.busy && "text-slate-400 line-through",
+                )}
+              >
                 <span>{p.a.label}</span>
                 <span>→</span>
                 <span>{p.b.label}</span>
@@ -581,13 +679,14 @@ function BatchDialog({ open, onClose, data, busy }: { open: boolean; onClose: ()
             ))}
           </div>
         )}
-        {pairs.some((p) => p.busy) && <p className="text-xs text-slate-500">Зачёркнутые пары пропущены: одна из точек уже занята.</p>}
+        {pairs.some((p) => p.busy) && (
+          <p className="text-xs text-slate-500">Зачёркнутые пары пропущены: одна из точек уже занята.</p>
+        )}
         {batch.error && <Alert>{batch.error.message}</Alert>}
       </div>
     </Dialog>
   );
 }
-
 
 function SeqPicker({
   seqs,
@@ -642,9 +741,15 @@ function ClearDialog({ open, onClose, data }: { open: boolean; onClose: () => vo
   const [restore, setRestore] = useState(true);
   const counts = useMemo(() => {
     const by = (k: string) => data.connections.filter((c) => c.kind === k).length;
-    return { fusion: by("fusion"), mechanical: by("mechanical"), patch: by("patch") };
+    return {
+      fusion: by("fusion"),
+      mechanical: by("mechanical"),
+      patch: by("patch"),
+    };
   }, [data.connections]);
-  const transit = new Set(data.cables.filter((c) => data.cables.filter((x) => x.cableId === c.cableId).length > 1).map((c) => c.cableId));
+  const transit = new Set(
+    data.cables.filter((c) => data.cables.filter((x) => x.cableId === c.cableId).length > 1).map((c) => c.cableId),
+  );
   const close = () => {
     clear.reset();
     onClose();
@@ -703,11 +808,21 @@ function ClearDialog({ open, onClose, data }: { open: boolean; onClose: () => vo
 function LeaveDialog({ cable, data, onClose }: { cable: CableIn | null; data: SplicingData; onClose: () => void }) {
   const leave = useLeaveCable(data.equipment.id);
   const byTerminal = useMemo(() => connectionByTerminal(data.connections), [data.connections]);
-  if (!cable) return <Dialog open={false} onClose={onClose} title="">{null}</Dialog>;
+  if (!cable)
+    return (
+      <Dialog open={false} onClose={onClose} title="">
+        {null}
+      </Dialog>
+    );
   const both = data.cables.filter((x) => x.cableId === cable.cableId);
   const transit = both.length > 1;
   const conns = new Set(
-    both.flatMap((c) => (c.fibers ?? []).map((f) => byTerminal.get(f.terminalId)).filter((x): x is Conn => !!x && x.kind !== "through").map((x) => x.id)),
+    both.flatMap((c) =>
+      (c.fibers ?? [])
+        .map((f) => byTerminal.get(f.terminalId))
+        .filter((x): x is Conn => !!x && x.kind !== "through")
+        .map((x) => x.id),
+    ),
   );
   const close = () => {
     leave.reset();
@@ -721,7 +836,11 @@ function LeaveDialog({ cable, data, onClose }: { cable: CableIn | null; data: Sp
       footer={
         <>
           <Button onClick={close}>Отмена</Button>
-          <Button variant="danger" disabled={leave.isPending} onClick={() => leave.mutate({ spanId: cable.spanId, force: true }, { onSuccess: close })}>
+          <Button
+            variant="danger"
+            disabled={leave.isPending}
+            onClick={() => leave.mutate({ spanId: cable.spanId, force: true }, { onSuccess: close })}
+          >
             Вывести
           </Button>
         </>

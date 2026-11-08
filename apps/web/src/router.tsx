@@ -4,6 +4,10 @@ import { CableTypesListPage } from "./features/cable-types/ListPage.js";
 import { AppShell } from "./layout/AppShell.js";
 
 export const router = createBrowserRouter([
+  // Без входа: вход, приглашение, смена пароля по ссылке.
+  { path: "login", lazy: async () => ({ Component: (await import("./features/auth/LoginPage.js")).LoginPage }) },
+  { path: "invite/:token", lazy: async () => ({ Component: (await import("./features/auth/TokenPages.js")).InvitePage }) },
+  { path: "reset/:token", lazy: async () => ({ Component: (await import("./features/auth/TokenPages.js")).ResetPage }) },
   {
     element: <AppShell />,
     children: [
@@ -15,6 +19,8 @@ export const router = createBrowserRouter([
         lazy: async () => ({ Component: (await import("./features/splicing/SplicingPage.js")).SplicingPage }),
       },
       { path: "documents", lazy: async () => ({ Component: (await import("./features/documents/DocumentsPage.js")).DocumentsPage }) },
+      { path: "profile", lazy: async () => ({ Component: (await import("./features/auth/ProfilePage.js")).ProfilePage }) },
+      { path: "settings/users", lazy: async () => ({ Component: (await import("./features/auth/UsersPage.js")).UsersPage }) },
       { path: "trash", lazy: async () => ({ Component: (await import("./features/trash/TrashPage.js")).TrashPage }) },
       { path: "catalog/cables", element: <CableTypesListPage /> },
       { path: "catalog/cables/new", element: <CableTypeEditorPage /> },

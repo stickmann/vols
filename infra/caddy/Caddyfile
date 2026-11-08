@@ -3,10 +3,7 @@
 {$SITE_ADDRESS} {
 	encode zstd gzip
 
-	# Пока в системе нет входа, весь сайт закрыт логином и паролем.
-	basic_auth {
-		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
-	}
+	# Вход — в самом приложении (e-mail, пароль, двухфакторный вход).
 
 	handle /api/* {
 		reverse_proxy api:3000

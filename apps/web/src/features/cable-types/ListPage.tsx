@@ -1,3 +1,4 @@
+import { useCan } from "../auth/api.js";
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { useCableTypes, useDeleteCableType, type CableTypeListItem } from "../../api/catalog.js";
@@ -8,6 +9,7 @@ import { LibraryDialog } from "./LibraryDialog.js";
 import { CONSTRUCTION_LABELS } from "./labels.js";
 
 export function CableTypesListPage() {
+  const canEdit = useCan("designer");
   const navigate = useNavigate();
   const list = useCableTypes();
   const del = useDeleteCableType();
@@ -33,10 +35,14 @@ export function CableTypesListPage() {
           <h1 className="text-xl font-semibold">Типы кабелей</h1>
           <p className="text-sm text-slate-500">Марки кабелей с конструкцией: модули, волокна и их цвета.</p>
         </div>
-        <Button onClick={() => setLibrary(true)}>Из каталога производителей</Button>
-        <Button variant="primary" onClick={() => navigate("/catalog/cables/new")}>
-          + Новый тип
-        </Button>
+        {canEdit && (
+          <>
+            <Button onClick={() => setLibrary(true)}>Из каталога производителей</Button>
+            <Button variant="primary" onClick={() => navigate("/catalog/cables/new")}>
+              + Новый тип
+            </Button>
+          </>
+        )}
       </div>
       <LibraryDialog open={library} onClose={() => setLibrary(false)} />
 
@@ -91,20 +97,22 @@ export function CableTypesListPage() {
                 <span className="text-slate-500">вол. · {describeConstruction(t.modules)}</span>
               </div>
               <ModuleStrip modules={t.modules} />
-              <div className="flex gap-1 md:ml-auto">
-                <Button size="sm" variant="ghost" onClick={() => navigate(`/catalog/cables/new?copy=${t.id}`)}>
-                  Копировать
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={t.inUse}
-                  title={t.inUse ? "Тип используется в проложенных кабелях" : undefined}
-                  onClick={() => setToDelete(t)}
-                >
-                  Удалить
-                </Button>
-              </div>
+              {canEdit && (
+                <div className="flex gap-1 md:ml-auto">
+                  <Button size="sm" variant="ghost" onClick={() => navigate(`/catalog/cables/new?copy=${t.id}`)}>
+                    Копировать
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={t.inUse}
+                    title={t.inUse ? "Тип используется в проложенных кабелях" : undefined}
+                    onClick={() => setToDelete(t)}
+                  >
+                    Удалить
+                  </Button>
+                </div>
+              )}
             </li>
           ))}
         </ul>

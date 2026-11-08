@@ -134,27 +134,14 @@ if [ -n "$EDGE" ] && ! docker network inspect "$EDGE" >/dev/null 2>&1; then
 fi
 
 if [ ! -f "$ENV_FILE" ]; then
-  say "Настройка доступа к сайту"
-  read -rp "Логин для входа на сайт: " AUTH_USER
-  while true; do
-    read -rsp "Пароль: " AUTH_PASS; echo
-    read -rsp "Пароль ещё раз: " AUTH_PASS2; echo
-    [ -n "$AUTH_PASS" ] && [ "$AUTH_PASS" = "$AUTH_PASS2" ] && break
-    echo "Пароли пустые или не совпадают, ещё раз."
-  done
-  AUTH_HASH=$(docker run --rm caddy:2.10-alpine caddy hash-password --plaintext "$AUTH_PASS")
-
   # Пароли БД — только hex, чтобы безопасно подставлять в строки подключения.
   cat > "$ENV_FILE" <<CONF
 # Сгенерировано deploy/install.sh $(date -u +%Y-%m-%dT%H:%MZ). Храните этот файл в секрете.
 SITE_ADDRESS='${DOMAIN:-:80}'
 POSTGRES_PASSWORD='$(openssl rand -hex 24)'
 VOLS_APP_PASSWORD='$(openssl rand -hex 24)'
-BASIC_AUTH_USER='${AUTH_USER}'
-# Хэш bcrypt в одинарных кавычках: символы \$ не должны раскрываться.
-BASIC_AUTH_HASH='${AUTH_HASH}'
-# Пока нет входа в систему: оператор выбирается в интерфейсе. Сайт закрыт паролем выше.
-ALLOW_TENANT_HEADER='true'
+# Вход — по e-mail и паролю; выбор оператора заголовком (режим разработки) выключен.
+ALLOW_TENANT_HEADER='false'
 # Подложка карты (необязательно): свой стиль MapLibre и спутник.
 VITE_MAP_STYLE=''
 VITE_SATELLITE_TILES=''
@@ -177,6 +164,8 @@ elif [ -n "$DOMAIN" ]; then
   set_env SITE_ADDRESS "$DOMAIN"
 fi
 set_env VOLS_VERSION "$(app_version)"
+# Вход по паролю есть — режим выбора оператора заголовком (до появления входа) выключаем.
+set_env ALLOW_TENANT_HEADER "false"
 
 say "Сборка и запуск контейнеров (первый раз — несколько минут)"
 vols_compose up -d --build
@@ -186,6 +175,8 @@ vols_compose run --rm api node dist/migrate.js
 
 say "Демо-данные (если ещё не созданы)"
 vols_compose run --rm api node dist/seed.js
+
+ensure_admin
 
 ADDR=$(env_value SITE_ADDRESS)
 if [ -n "$EDGE" ]; then
