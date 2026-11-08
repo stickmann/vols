@@ -23,12 +23,23 @@ export const ROLE_HINTS: Record<Role, string> = {
 
 export const atLeast = (role: Role | null | undefined, min: Role) => !!role && ROLES.indexOf(role) >= ROLES.indexOf(min);
 
+export interface Usage {
+  plan: "free" | "unlimited";
+  points: number;
+  pointLimit: number | null;
+  users: number;
+  userLimit: number | null;
+}
+
+export const PLAN_LABELS: Record<Usage["plan"], string> = { free: "Бесплатный", unlimited: "Без ограничений" };
+
 export interface Me {
   user: { id: string; email: string; name: string; twoFactor: boolean; recoveryCodesLeft: number };
   tenant: { id: string; name: string; require2fa: boolean } | null;
   role: Role | null;
   memberships: { tenantId: string; name: string; role: Role }[];
   mustSetup2fa: boolean;
+  usage: Usage | null;
 }
 
 export const meKey = ["auth", "me"] as const;

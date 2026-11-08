@@ -32,7 +32,7 @@ const PER_TRUNK = 10;
 const STEP_M = 120;
 
 const app = createDb(env.DATABASE_URL, { max: 2 });
-const tenantId = await provisionTenant(app.db, { name: `Нагрузочный тест (${CLOSURES} муфт)`, slug: `bench-${randomUUID().slice(0, 8)}` });
+const tenantId = await provisionTenant(app.db, { name: `Нагрузочный тест (${CLOSURES} муфт)`, slug: `bench-${randomUUID().slice(0, 8)}`, plan: "unlimited" });
 const t0 = Date.now();
 
 const ids = await withTenant(app.db, { tenantId }, async (tx) => {

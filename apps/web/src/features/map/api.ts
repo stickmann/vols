@@ -48,6 +48,8 @@ function useNetMutation<V, R>(fn: (v: V) => Promise<R>) {
       void qc.invalidateQueries({ queryKey: ["trace"] });
       void qc.invalidateQueries({ queryKey: ["cable"] });
       void qc.invalidateQueries({ queryKey: ["cable-types"] });
+      // Счётчик точек учёта тарифа.
+      void qc.invalidateQueries({ queryKey: ["auth", "me"] });
     },
   });
 }

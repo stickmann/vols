@@ -183,6 +183,33 @@ Let's Encrypt ограничивает число неудачных попыт�
 read -rsp "Новый пароль: " P; echo; printf '%s' "$P" | docker compose --env-file .env.prod -f docker-compose.prod.yml run --rm -T api node dist/create-admin.js --email admin@example.ru --name "Имя Фамилия"; unset P
 ```
 
+## Тарифы
+
+| Тариф | Точки учёта | Пользователи |
+|---|---|---|
+| Бесплатный (`free`) — у новых операторов | 200 | 3 |
+| Без ограничений (`unlimited`) | — | — |
+
+Точки учёта — муфты, ящики, кроссы, OLT и ONU. Опоры, колодцы, трассы, кабели и сплиттеры в лимит не входят. Ожидающие приглашения занимают места пользователей. Восстановить удалённое из корзины можно и сверх лимита. Операторы, которые были до появления тарифов, и демо-оператор на своей установке — без ограничений.
+
+Тарифы всех операторов и их использование:
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml run --rm -T api node dist/set-plan.js
+```
+
+Сменить тариф (оператор — по slug или id; `all` — все):
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml run --rm -T api node dist/set-plan.js --tenant demo --plan free
+```
+
+Свой лимит вместо лимита тарифа (`default` — вернуть лимит тарифа):
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml run --rm -T api node dist/set-plan.js --tenant demo --points 500 --users 10
+```
+
 ## Обслуживание
 
 | Задача | Команда |

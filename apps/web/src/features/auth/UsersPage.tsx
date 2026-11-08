@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../../api/client.js";
 import { Alert, Badge, Button, Dialog, Field, Input, Select } from "../../components/ui/index.js";
-import { atLeast, meKey, ROLE_HINTS, ROLE_LABELS, ROLES, useCurrentUser, type Role } from "./api.js";
+import { atLeast, meKey, PLAN_LABELS, ROLE_HINTS, ROLE_LABELS, ROLES, useCurrentUser, type Role, type Usage } from "./api.js";
 
 interface Member {
   id: string;
@@ -186,6 +186,7 @@ export function UsersPage() {
         </section>
       )}
 
+      {me.usage && <PlanSection usage={me.usage} />}
       <TenantSettings />
 
       <InviteDialog
@@ -358,6 +359,41 @@ function TenantSettings() {
         </span>
       </label>
       {save.isError && <Alert>{save.error.message}</Alert>}
+    </section>
+  );
+}
+
+function Meter({ label, value, limit }: { label: string; value: number; limit: number | null }) {
+  const pct = limit ? Math.min(100, Math.round((value / limit) * 100)) : 0;
+  return (
+    <div>
+      <div className="flex justify-between text-sm">
+        <span>{label}</span>
+        <span className="tabular-nums">
+          {value} из {limit ?? "∞"}
+        </span>
+      </div>
+      {limit != null && (
+        <div className="mt-1 h-1.5 overflow-hidden rounded bg-slate-100" aria-hidden>
+          <div className={pct >= 100 ? "h-full bg-red-500" : pct >= 90 ? "h-full bg-amber-500" : "h-full bg-brand-600"} style={{ width: `${pct}%` }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PlanSection({ usage }: { usage: Usage }) {
+  return (
+    <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
+      <h2 className="font-semibold">Тариф: {PLAN_LABELS[usage.plan]}</h2>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Meter label="Точки учёта" value={usage.points} limit={usage.pointLimit} />
+        <Meter label="Пользователи" value={usage.users} limit={usage.userLimit} />
+      </div>
+      <p className="text-xs text-slate-500">
+        Точки учёта — муфты, ящики, кроссы, OLT и ONU. Опоры, колодцы, трассы, кабели и сплиттеры в лимит не входят. Ожидающие
+        приглашения занимают места пользователей.
+      </p>
     </section>
   );
 }

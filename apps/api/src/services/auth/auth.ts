@@ -12,6 +12,7 @@ import {
   verifyTotp,
 } from "./crypto.js";
 import { atLeast, type Role } from "./roles.js";
+import { assertUserSlot, tenantUsage } from "../plans.js";
 
 export const SESSION_DAYS = 30;
 const INVITE_DAYS = 7;
@@ -175,7 +176,9 @@ export async function me(db: Db, s: SessionInfo) {
   const u = (await userById(db, s.userId))!;
   const memberships = await userMemberships(db, s.userId);
   const current = memberships.find((m) => m.tenantId === s.tenantId) ?? null;
+  const usage = current ? await withUserTenant(db, s.userId, current.tenantId, (tx) => tenantUsage(tx)) : null;
   return {
+    usage,
     user: { id: u.id, email: u.email, name: u.name, twoFactor: !!u.totpEnabledAt, recoveryCodesLeft: u.recoveryCodes?.length ?? 0 },
     tenant: current ? { id: current.tenantId, name: current.name, require2fa: current.require2fa } : null,
     role: current?.role ?? null,
@@ -229,6 +232,10 @@ export async function disableTwoFactor(db: Db, s: SessionInfo, password: string)
 
 export async function createInvite(db: Db, tenantId: string, byUserId: string | null, byRole: Role, email: string, role: Role) {
   if (role === "owner" && byRole !== "owner") throw new HttpError(403, "Назначить владельца может только владелец");
+  // Ожидающие приглашения занимают места тарифа.
+  const [{ n: pending } = { n: 0 }] = await db.execute<{ n: number }>(sql`
+    SELECT count(*)::int AS n FROM invites WHERE tenant_id = ${tenantId} AND accepted_at IS NULL AND expires_at > now()`);
+  await withTenant(db, { tenantId }, (tx) => assertUserSlot(tx, pending));
   const token = randomToken();
   await db.execute(sql`
     INSERT INTO invites (tenant_id, email, role, token_hash, created_by, expires_at)
@@ -280,11 +287,13 @@ export async function acceptInvite(db: Db, token: string, v: { name?: string; pa
     u = (await userByEmail(db, i.email))!;
   }
   const userId = u.id;
-  await withUserTenant(db, userId, i.tenantId, (tx) =>
-    tx.execute(sql`
+  await withUserTenant(db, userId, i.tenantId, async (tx) => {
+    const [already] = await tx.execute(sql`SELECT 1 FROM memberships WHERE tenant_id = ${i.tenantId} AND user_id = ${userId}`);
+    if (!already) await assertUserSlot(tx, 0);
+    await tx.execute(sql`
       INSERT INTO memberships (tenant_id, user_id, role) VALUES (${i.tenantId}, ${userId}, ${i.role}::member_role)
-      ON CONFLICT (tenant_id, user_id) DO UPDATE SET role = EXCLUDED.role`),
-  );
+      ON CONFLICT (tenant_id, user_id) DO UPDATE SET role = EXCLUDED.role`);
+  });
   await db.execute(sql`UPDATE invites SET accepted_at = now() WHERE id = ${i.id}`);
   const pending2fa = !!u.totpEnabledAt;
   return { token: await createSession(db, userId, { tenantId: i.tenantId, pending2fa, ...meta }), twoFactorRequired: pending2fa };

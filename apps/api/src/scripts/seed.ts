@@ -19,7 +19,8 @@ if (existing.length > 0) {
   console.log(`Демо-оператор уже есть: ${existing[0]!.id}`);
 } else {
   const app = createDb(env.DATABASE_URL, { max: 1 });
-  const tenantId = await provisionTenant(app.db, { name: "Демо-оператор", slug: SLUG, id: DEMO_TENANT_ID });
+  // На своём сервере демо-оператор — обычно и рабочий: без ограничений тарифа.
+  const tenantId = await provisionTenant(app.db, { name: "Демо-оператор", slug: SLUG, id: DEMO_TENANT_ID, plan: "unlimited" });
   await withTenant(app.db, { tenantId }, (tx) => createDemoNetwork(tx, tenantId));
   await app.close();
   console.log(`Создан демо-оператор: ${tenantId}`);
