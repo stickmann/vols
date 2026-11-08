@@ -1,21 +1,64 @@
-import { DEMO_TENANT_ID } from "@vols/shared";
-import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
-import { NavLink, Outlet } from "react-router";
-import { Button, Dialog, Field, Input, cx } from "../components/ui/index.js";
+import { useEffect, useState } from "react";
+import { Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router";
+import { ApiError, UNAUTHORIZED_EVENT } from "../api/client.js";
+import { Alert, Button, Select, cx } from "../components/ui/index.js";
+import { atLeast, MeContext, ROLE_LABELS, useLogout, useMe, useSwitchTenant, type Me, type Role } from "../features/auth/api.js";
 import { UndoToast } from "../features/trash/undo.js";
-import { getTenantId, setTenantId } from "../lib/tenant.js";
 
-const nav = [
+type NavItem = { to: string; label: string; min?: Role } | { section: string; min?: Role };
+
+const nav: NavItem[] = [
   { to: "/map", label: "Карта" },
   { to: "/documents", label: "Документы" },
   { to: "/trash", label: "Корзина" },
   { section: "Справочники" },
   { to: "/catalog/cables", label: "Типы кабелей" },
-] as const;
+  { section: "Управление", min: "admin" },
+  { to: "/settings/users", label: "Пользователи", min: "admin" },
+];
 
+/** Вход обязателен: без сессии — на страницу входа, без обязательного 2FA — в профиль. */
 export function AppShell() {
+  const me = useMe();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // Сессия истекла посреди работы (любой запрос вернул 401) — на вход с возвратом сюда.
+  useEffect(() => {
+    const onUnauthorized = () =>
+      navigate(`/login?next=${encodeURIComponent(location.pathname + location.search)}`, { replace: true });
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+  }, [navigate, location]);
+
+  if (me.isPending) return <div className="p-6 text-sm text-slate-500">Загрузка…</div>;
+  if (me.isError) {
+    if (me.error instanceof ApiError && me.error.status === 401)
+      return <Navigate to={`/login?next=${encodeURIComponent(location.pathname + location.search)}`} replace />;
+    return (
+      <div className="p-6">
+        <Alert>{me.error.message}</Alert>
+      </div>
+    );
+  }
+  if (me.data.mustSetup2fa && location.pathname !== "/profile") return <Navigate to="/profile" replace />;
+  if (!me.data.tenant)
+    return (
+      <div className="p-6">
+        <Alert tone="warning">У вас нет доступа ни к одному оператору. Попросите администратора прислать приглашение.</Alert>
+      </div>
+    );
+
+  return (
+    <MeContext.Provider value={me.data}>
+      <Shell me={me.data} />
+    </MeContext.Provider>
+  );
+}
+
+function Shell({ me }: { me: Me }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const items = nav.filter((i) => !i.min || atLeast(me.role, i.min));
 
   return (
     <div className="flex h-full flex-col md:flex-row">
@@ -36,7 +79,7 @@ export function AppShell() {
           <Brand />
         </div>
         <nav className="flex-1 space-y-0.5 px-2 py-2" onClick={() => setMenuOpen(false)}>
-          {nav.map((item, i) =>
+          {items.map((item, i) =>
             "section" in item ? (
               <div key={i} className="px-2 pt-4 pb-1 text-xs font-semibold tracking-wide text-slate-400 uppercase">
                 {item.section}
@@ -57,7 +100,7 @@ export function AppShell() {
             ),
           )}
         </nav>
-        <TenantSwitch />
+        <UserBlock me={me} onNavigate={() => setMenuOpen(false)} />
         <div className="px-4 pb-3 text-xs text-slate-400">Версия {import.meta.env.VITE_APP_VERSION || "dev"}</div>
       </aside>
 
@@ -78,52 +121,54 @@ function Brand() {
   );
 }
 
-/** Временный выбор оператора до появления авторизации. */
-function TenantSwitch() {
-  const qc = useQueryClient();
-  const [open, setOpen] = useState(false);
-  const [value, setValue] = useState(getTenantId());
-  const current = getTenantId();
-  const valid = /^[0-9a-f-]{36}$/i.test(value.trim());
-
+/** Кто вошёл, выбор оператора, профиль и выход. */
+function UserBlock({ me, onNavigate }: { me: Me; onNavigate: () => void }) {
+  const navigate = useNavigate();
+  const logout = useLogout();
+  const switchTenant = useSwitchTenant();
   return (
-    <div className="border-t border-slate-200 px-4 py-3 text-xs text-slate-500">
-      <div>Оператор (режим разработки)</div>
-      <button type="button" className="mt-0.5 font-medium text-slate-700 hover:underline" onClick={() => setOpen(true)}>
-        {current === DEMO_TENANT_ID ? "Демо-оператор" : `${current.slice(0, 8)}…`}
-      </button>
-      <Dialog
-        open={open}
-        onClose={() => setOpen(false)}
-        title="Оператор"
-        footer={
-          <>
-            <Button
-              onClick={() => {
-                setTenantId("");
-                setValue(DEMO_TENANT_ID);
-              }}
-            >
-              Демо
-            </Button>
-            <Button
-              variant="primary"
-              disabled={!valid}
-              onClick={() => {
-                setTenantId(value.trim());
-                setOpen(false);
-                void qc.resetQueries();
-              }}
-            >
-              Применить
-            </Button>
-          </>
-        }
-      >
-        <Field label="ID оператора" hint="Пока нет входа в систему, данные открываются по ID оператора.">
-          <Input value={value} onChange={(e) => setValue(e.target.value)} className="font-mono" />
-        </Field>
-      </Dialog>
+    <div className="space-y-2 border-t border-slate-200 px-4 py-3 text-sm">
+      {me.memberships.length > 1 ? (
+        <Select
+          aria-label="Оператор"
+          value={me.tenant!.id}
+          onChange={(e) =>
+            switchTenant.mutate(e.target.value, {
+              onSuccess: () => navigate("/map"),
+            })
+          }
+        >
+          {me.memberships.map((m) => (
+            <option key={m.tenantId} value={m.tenantId}>
+              {m.name}
+            </option>
+          ))}
+        </Select>
+      ) : (
+        <div className="truncate font-medium text-slate-700">{me.tenant!.name}</div>
+      )}
+      <div className="flex items-center gap-2">
+        <NavLink
+          to="/profile"
+          onClick={onNavigate}
+          className="min-w-0 flex-1 truncate text-slate-600 hover:text-slate-900 hover:underline"
+          title="Профиль"
+        >
+          {me.user.name}
+          <span className="block truncate text-xs text-slate-400">{me.role ? ROLE_LABELS[me.role] : ""}</span>
+        </NavLink>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() =>
+            logout.mutate(undefined, {
+              onSuccess: () => navigate("/login", { replace: true }),
+            })
+          }
+        >
+          Выйти
+        </Button>
+      </div>
     </div>
   );
 }

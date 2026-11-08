@@ -1,3 +1,4 @@
+import { useCan } from "../auth/api.js";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../../api/client.js";
@@ -11,16 +12,29 @@ interface Operation {
   summary: { kind: "delete" | "change"; text: string }[] | null;
   createdAt: string;
   undoneAt: string | null;
+  userName: string | null;
   canUndo: boolean;
 }
 
-const fmt = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
+const fmt = new Intl.DateTimeFormat("ru-RU", {
+  day: "numeric",
+  month: "long",
+  hour: "2-digit",
+  minute: "2-digit",
+});
 
 /** Корзина: удаления и другие операции за 30 дней, с восстановлением. */
 export function TrashPage() {
-  const list = useQuery({ queryKey: ["operations"], queryFn: () => api<Operation[]>("/operations") });
+  const canEdit = useCan("designer");
+  const list = useQuery({
+    queryKey: ["operations"],
+    queryFn: () => api<Operation[]>("/operations"),
+  });
   const undo = useUndo();
-  const [errorFor, setErrorFor] = useState<{ id: string; message: string } | null>(null);
+  const [errorFor, setErrorFor] = useState<{
+    id: string;
+    message: string;
+  } | null>(null);
   const [restored, setRestored] = useState<string | null>(null);
 
   return (
@@ -43,14 +57,20 @@ export function TrashPage() {
         {list.data?.map((op) => {
           const isUndo = op.kind === "undo";
           return (
-            <li key={op.id} className={cx("rounded-lg border border-slate-200 bg-white p-3", (op.undoneAt || isUndo) && "bg-slate-50")}>
+            <li
+              key={op.id}
+              className={cx("rounded-lg border border-slate-200 bg-white p-3", (op.undoneAt || isUndo) && "bg-slate-50")}
+            >
               <div className="flex flex-wrap items-start gap-2">
                 <div className="min-w-0 flex-1">
                   <div className={cx("text-sm font-medium", isUndo && "text-slate-500")}>{op.title}</div>
-                  <div className="text-xs text-slate-500">{fmt.format(new Date(op.createdAt))}</div>
+                  <div className="text-xs text-slate-500">
+                    {fmt.format(new Date(op.createdAt))}
+                    {op.userName && ` · ${op.userName}`}
+                  </div>
                 </div>
                 {op.undoneAt && <Badge tone="green">восстановлено</Badge>}
-                {op.canUndo && (
+                {op.canUndo && canEdit && (
                   <Button
                     size="sm"
                     disabled={undo.isPending}

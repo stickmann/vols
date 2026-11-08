@@ -85,3 +85,27 @@ vols_compose() {
   [ -n "$(env_value EDGE_NETWORK)" ] && files+=(-f docker-compose.edge.yml)
   docker compose --env-file .env.prod "${files[@]}" "$@"
 }
+
+# ensure_admin — если на установке ещё нет ни одного пользователя с паролем, спросить данные
+# первого администратора и создать его (владелец всех операторов установки).
+ensure_admin() {
+  if vols_compose run --rm -T api node dist/create-admin.js --check >/dev/null 2>&1; then return 0; fi
+  say "Первый администратор"
+  echo "Вход на сайт — по e-mail и паролю. Остальных сотрудников администратор пригласит из раздела «Пользователи»."
+  local email name pass pass2
+  while true; do
+    read -rp "E-mail администратора: " email
+    [[ "$email" == *@* ]] && break
+    echo "Нужен e-mail."
+  done
+  read -rp "Имя и фамилия: " name
+  [ -n "$name" ] || name="Администратор"
+  while true; do
+    read -rsp "Пароль (не короче 8 символов): " pass; echo
+    read -rsp "Пароль ещё раз: " pass2; echo
+    [ "${#pass}" -ge 8 ] && [ "$pass" = "$pass2" ] && break
+    echo "Пароль короче 8 символов или не совпадает, ещё раз."
+  done
+  # Пароль — через stdin, чтобы его не было в списке процессов и истории команд.
+  printf '%s' "$pass" | vols_compose run --rm -T api node dist/create-admin.js --email "$email" --name "$name"
+}

@@ -51,8 +51,6 @@ services:
         condition: service_healthy
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:-:80}
-      BASIC_AUTH_USER: ${BASIC_AUTH_USER:?задайте в .env.prod}
-      BASIC_AUTH_HASH: ${BASIC_AUTH_HASH:?задайте в .env.prod}
     # По умолчанию ВОЛС сам принимает 80/443. Если они заняты другим веб-сервером,
     # задайте WEB_HTTP_BIND / WEB_HTTPS_BIND в .env.prod (см. deploy/README.md).
     ports:

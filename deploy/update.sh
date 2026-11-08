@@ -32,12 +32,17 @@ if [ -z "${VOLS_RELEASE_READY:-}" ]; then
 fi
 
 set_env VOLS_VERSION "$(app_version)"
+# С версии со входом по паролю: общий пароль сайта (basic auth) убран, поэтому режим выбора
+# оператора заголовком выключается до пересборки — иначе API на минуту был бы открыт без входа.
+set_env ALLOW_TENANT_HEADER "false"
 
 say "Сборка и перезапуск контейнеров"
 vols_compose up -d --build
 
 say "Миграции базы данных"
 vols_compose run --rm api node dist/migrate.js
+
+ensure_admin
 
 # Старые образы после пересборки больше не нужны.
 docker image prune -f >/dev/null
