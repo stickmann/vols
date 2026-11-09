@@ -50,6 +50,13 @@
       "when": 1794164225622,
       "tag": "0006_signup",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1794186419814,
+      "tag": "0007_mail",
+      "breakpoints": true
     }
   ]
 }

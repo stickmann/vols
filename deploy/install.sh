@@ -164,6 +164,7 @@ elif [ -n "$DOMAIN" ]; then
   set_env SITE_ADDRESS "$DOMAIN"
 fi
 set_env VOLS_VERSION "$(app_version)"
+ensure_public_url
 # Вход по паролю есть — режим выбора оператора заголовком (до появления входа) выключаем.
 set_env ALLOW_TENANT_HEADER "false"
 

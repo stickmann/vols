@@ -18,6 +18,18 @@ const schema = z.object({
   SIGNUP: z.enum(["open", "closed"]).default("closed"),
   /** Ссылка на условия использования и обработки ПДн для формы регистрации (необязательно). */
   TERMS_URL: z.string().url().optional(),
+  /** Адрес сайта для ссылок в письмах: https://vols.example.ru */
+  PUBLIC_URL: z.string().url().optional(),
+  /** Почта (SMTP). Без SMTP_HOST письма не отправляются — ссылки копируются вручную. */
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().int().default(465),
+  /** SSL с начала соединения (порт 465); false — STARTTLS (порт 587). По умолчанию — по порту. */
+  SMTP_SECURE: z.enum(["true", "false"]).optional(),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASSWORD: z.string().optional(),
+  /** От кого: «ВОЛС <noreply@example.ru>» — адрес должен принадлежать ящику SMTP_USER. */
+  MAIL_FROM: z.string().optional(),
 });
 
-export const env = schema.parse(process.env);
+// Пустые строки из .env.prod (KEY='') — как не заданные.
+export const env = schema.parse(Object.fromEntries(Object.entries(process.env).filter(([, v]) => v !== "")));

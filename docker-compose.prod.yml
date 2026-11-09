@@ -36,6 +36,14 @@ services:
       ALLOW_TENANT_HEADER: ${ALLOW_TENANT_HEADER:-false}
       SIGNUP: ${SIGNUP:-closed}
       TERMS_URL: ${TERMS_URL:-}
+      # Письма (приглашения, «Забыли пароль?», подтверждение e-mail) — см. deploy/README.md.
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_SECURE: ${SMTP_SECURE:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-}
       VOLS_VERSION: ${VOLS_VERSION:-dev}
 
   web:

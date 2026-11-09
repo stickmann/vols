@@ -35,6 +35,8 @@ export const users = pgTable("users", {
   lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
   /** Когда принял условия использования и обработки персональных данных. */
   termsAcceptedAt: timestamp("terms_accepted_at", { withTimezone: true }),
+  /** Адрес подтверждён: письмо со ссылкой открыто (или пришёл по приглашению на этот адрес). */
+  emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
   disabledAt: timestamp("disabled_at", { withTimezone: true }),
   ...timestamps(),
 });
@@ -139,3 +141,13 @@ export const operations = pgTable(
   },
   (t) => [index().on(t.tenantId, t.createdAt)],
 );
+
+/** Ссылка подтверждения e-mail после регистрации. */
+export const emailVerifications = pgTable("email_verifications", {
+  id: id(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  tokenHash: text("token_hash").notNull().unique(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  usedAt: timestamp("used_at", { withTimezone: true }),
+});

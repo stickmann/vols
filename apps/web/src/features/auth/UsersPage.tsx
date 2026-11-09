@@ -25,6 +25,8 @@ const dt = new Intl.DateTimeFormat("ru-RU", {
   hour: "2-digit",
   minute: "2-digit",
 });
+/** Ответ на приглашение и сброс: ушло ли письмо. Ссылка выдаётся всегда — на случай, если письмо не дошло. */
+type Sent = { token: string; emailed?: boolean; mailError?: string | null };
 const link = (kind: "invite" | "reset", token: string) => `${window.location.origin}/${kind}/${token}`;
 
 export function UsersPage() {
@@ -48,13 +50,15 @@ export function UsersPage() {
     onSuccess: refresh,
   });
   const resetLink = useMutation({
-    mutationFn: (id: string) => api<{ token: string }>(`/members/${id}/reset-link`, { method: "POST" }),
+    mutationFn: (id: string) => api<Sent>(`/members/${id}/reset-link`, { method: "POST" }),
   });
   const [inviteOpen, setInviteOpen] = useState(false);
   const [shown, setShown] = useState<{
     title: string;
     url: string;
     hint: string;
+    sentTo?: string | null;
+    mailError?: string | null;
   } | null>(null);
   const [removing, setRemoving] = useState<Member | null>(null);
   const isOwner = me.role === "owner";
@@ -140,7 +144,11 @@ export function UsersPage() {
                                 setShown({
                                   title: `Смена пароля: ${m.name}`,
                                   url: link("reset", r.token),
-                                  hint: "Передайте ссылку сотруднику. Действует 24 часа, один раз; после смены пароля вход на всех устройствах сбрасывается.",
+                                  hint: r.emailed
+                                    ? "Ссылка действует 24 часа, один раз; после смены пароля вход на всех устройствах сбрасывается. Если письмо не дошло — передайте ссылку сами."
+                                    : "Передайте ссылку сотруднику. Действует 24 часа, один раз; после смены пароля вход на всех устройствах сбрасывается.",
+                                  sentTo: r.emailed ? m.email : null,
+                                  mailError: r.mailError,
                                 }),
                             })
                           }
@@ -193,12 +201,16 @@ export function UsersPage() {
         open={inviteOpen}
         onClose={() => setInviteOpen(false)}
         roles={assignable}
-        onCreated={(email, token) => {
+        onCreated={(email, r) => {
           refresh();
           setShown({
             title: `Приглашение для ${email}`,
-            url: link("invite", token),
-            hint: "Отправьте ссылку сотруднику. Действует 7 дней, один раз. По ней он задаст имя и пароль.",
+            url: link("invite", r.token),
+            hint: r.emailed
+              ? "Ссылка действует 7 дней, один раз. Если письмо не дошло (проверьте «Спам») — отправьте ссылку сами."
+              : "Отправьте ссылку сотруднику. Действует 7 дней, один раз. По ней он задаст имя и пароль.",
+            sentTo: r.emailed ? email : null,
+            mailError: r.mailError,
           });
         }}
       />
@@ -214,6 +226,8 @@ export function UsersPage() {
       >
         {shown && (
           <div className="space-y-2 text-sm">
+            {shown.sentTo && <Alert tone="success">Письмо отправлено на {shown.sentTo}</Alert>}
+            {shown.mailError && <Alert>{shown.mailError}</Alert>}
             <p className="text-slate-600">{shown.hint}</p>
             <div className="flex gap-2">
               <Input readOnly value={shown.url} onFocus={(e) => e.target.select()} aria-label="Ссылка" />
@@ -260,13 +274,13 @@ function InviteDialog({
   open: boolean;
   onClose: () => void;
   roles: Role[];
-  onCreated: (email: string, token: string) => void;
+  onCreated: (email: string, r: Sent) => void;
 }) {
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<Role>("technician");
   const create = useMutation({
     mutationFn: () =>
-      api<{ token: string }>("/invites", {
+      api<Sent>("/invites", {
         method: "POST",
         body: { email, role },
       }),
@@ -285,7 +299,7 @@ function InviteDialog({
             onClick={() =>
               create.mutate(undefined, {
                 onSuccess: (r) => {
-                  onCreated(email, r.token);
+                  onCreated(email, r);
                   setEmail("");
                   onClose();
                 },

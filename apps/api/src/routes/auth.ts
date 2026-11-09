@@ -2,6 +2,7 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { HttpError } from "../errors.js";
 import * as auth from "../services/auth/auth.js";
+import { deliver, resetMail, verifyMail } from "../services/mail.js";
 
 const COOKIE = "vols_session";
 
@@ -80,7 +81,16 @@ export const authRoutes: FastifyPluginAsync<{ signup: boolean; termsUrl?: string
   });
 
   // Что показать на странице входа: открыта ли регистрация, ссылка на условия.
-  app.get("/config", async () => ({ signup: opts.signup, termsUrl: opts.termsUrl ?? null }));
+  app.get("/config", async () => ({ signup: opts.signup, termsUrl: opts.termsUrl ?? null, mail: app.mailer.enabled }));
+
+  /** Письмо со ссылкой подтверждения e-mail. */
+  const sendVerification = async (userId: string) => {
+    if (!app.mailer.enabled) return;
+    const v = await auth.createVerification(app.db, userId);
+    if (!v) return;
+    const url = `${app.mailer.publicUrl}/verify/${v.token}`;
+    await deliver(app.mailer, verifyMail({ to: v.email, name: v.name, tenantName: v.tenantName, url, hours: auth.VERIFY_HOURS }), app.log);
+  };
 
   /** Регистрация оператора: не чаще 5 раз в час с одного адреса; скрытое поле website — ловушка для ботов. */
   const signups = new Map<string, number[]>();
@@ -104,6 +114,7 @@ export const authRoutes: FastifyPluginAsync<{ signup: boolean; termsUrl?: string
     if (v.website) throw new HttpError(400, "Не удалось зарегистрироваться"); // заполнил бот
     const r = await auth.signup(app.db, v, meta(req));
     setSessionCookie(req, reply, r.token);
+    await sendVerification(r.userId).catch((e) => app.log.error(e));
     return reply.code(201).send({ ok: true });
   });
 
@@ -116,6 +127,32 @@ export const authRoutes: FastifyPluginAsync<{ signup: boolean; termsUrl?: string
   });
 
   app.get("/me", async (req) => auth.me(app.db, await session(req)));
+
+  // Подтверждение e-mail: повторная отправка (из профиля) и переход по ссылке.
+  app.post("/verify/resend", async (req) => {
+    if (!app.mailer.enabled) throw new HttpError(422, "Отправка писем не настроена");
+    await sendVerification((await session(req)).userId);
+    return { ok: true };
+  });
+  app.post("/verify/:token", async (req) => {
+    const { token } = z.object({ token: z.string().min(20).max(100) }).parse(req.params);
+    await limited([`verify:${req.ip}`], () => auth.verifyEmail(app.db, token));
+    return { ok: true };
+  });
+
+  // «Забыли пароль?» — ответ одинаковый, есть такой пользователь или нет.
+  app.post("/forgot", async (req) => {
+    if (!app.mailer.enabled) throw new HttpError(422, "Восстановление по почте не настроено — обратитесь к администратору");
+    const { email } = z.object({ email: z.string().trim().min(3).max(200) }).parse(req.body);
+    checkLimit([`forgot:${req.ip}`]);
+    recordFailure([`forgot:${req.ip}`]); // каждый запрос считается: не больше 10 за 15 минут с адреса
+    const r = await auth.forgotPassword(app.db, email);
+    if (r) {
+      const url = `${app.mailer.publicUrl}/reset/${r.token}`;
+      await deliver(app.mailer, resetMail({ to: r.email, name: r.name, url, hours: r.hours, byAdmin: false }), app.log);
+    }
+    return { ok: true };
+  });
 
   app.post("/switch-tenant", async (req) => {
     const { tenantId } = z.object({ tenantId: z.uuid() }).parse(req.body);

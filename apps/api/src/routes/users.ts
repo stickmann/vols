@@ -3,6 +3,7 @@ import { z } from "zod";
 import { withTenant, type Tx } from "../db/client.js";
 import * as auth from "../services/auth/auth.js";
 import { ROLES } from "../services/auth/roles.js";
+import { deliver, inviteMail, resetMail } from "../services/mail.js";
 
 const role = z.enum(ROLES);
 
@@ -22,8 +23,23 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
   app.post("/invites", async (req, reply) => {
     const ctx = app.requireContext(req);
     const v = z.object({ email: z.email().max(200), role }).parse(req.body);
-    const r = await auth.createInvite(app.db, ctx.tenantId, ctx.userId ?? null, ctx.role, v.email, v.role);
-    return reply.code(201).send(r);
+    const r = await auth.createInvite(app.db, ctx.tenantId, ctx.userId ?? null, ctx.role, v.email, v.role, {
+      requireVerified: app.mailer.enabled,
+    });
+    const me = ctx.userId ? await auth.me(app.db, { sessionId: "", userId: ctx.userId, tenantId: ctx.tenantId, pending2fa: false }) : null;
+    const sent = await deliver(
+      app.mailer,
+      inviteMail({
+        to: v.email,
+        tenantName: me?.tenant?.name ?? "",
+        inviterName: me?.user.name ?? null,
+        role: v.role,
+        url: `${app.mailer.publicUrl}/invite/${r.token}`,
+        days: r.expiresInDays,
+      }),
+      app.log,
+    );
+    return reply.code(201).send({ ...r, ...sent });
   });
 
   app.delete("/invites/:id", async (req, reply) => {
@@ -47,7 +63,13 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
 
   app.post("/members/:userId/reset-link", async (req) => {
     const ctx = app.requireContext(req);
-    return auth.createResetLink(app.db, ctx.tenantId, ctx.userId ?? null, userId(req));
+    const r = await auth.createResetLink(app.db, ctx.tenantId, ctx.userId ?? null, userId(req));
+    const sent = await deliver(
+      app.mailer,
+      resetMail({ to: r.email, name: r.name, url: `${app.mailer.publicUrl}/reset/${r.token}`, hours: r.expiresInHours, byAdmin: true }),
+      app.log,
+    );
+    return { token: r.token, expiresInHours: r.expiresInHours, ...sent };
   });
 
   app.patch("/tenant", async (req) => {

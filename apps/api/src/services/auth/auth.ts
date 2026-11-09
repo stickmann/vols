@@ -51,13 +51,14 @@ type UserRow = {
   totpLastStep: number | null;
   recoveryCodes: string[] | null;
   disabledAt: string | null;
+  emailVerifiedAt: string | null;
 };
 
 async function userByEmail(db: Db | Tx, email: string) {
   const [u] = await db.execute<UserRow>(sql`
     SELECT id, email, name, password_hash AS "passwordHash", totp_secret AS "totpSecret",
            totp_enabled_at AS "totpEnabledAt", totp_last_step AS "totpLastStep",
-           recovery_codes AS "recoveryCodes", disabled_at AS "disabledAt"
+           recovery_codes AS "recoveryCodes", disabled_at AS "disabledAt", email_verified_at AS "emailVerifiedAt"
     FROM users WHERE email = ${normEmail(email)}`);
   return u;
 }
@@ -66,7 +67,7 @@ async function userById(db: Db | Tx, id: string) {
   const [u] = await db.execute<UserRow>(sql`
     SELECT id, email, name, password_hash AS "passwordHash", totp_secret AS "totpSecret",
            totp_enabled_at AS "totpEnabledAt", totp_last_step AS "totpLastStep",
-           recovery_codes AS "recoveryCodes", disabled_at AS "disabledAt"
+           recovery_codes AS "recoveryCodes", disabled_at AS "disabledAt", email_verified_at AS "emailVerifiedAt"
     FROM users WHERE id = ${id}`);
   return u;
 }
@@ -179,7 +180,14 @@ export async function me(db: Db, s: SessionInfo) {
   const usage = current ? await withUserTenant(db, s.userId, current.tenantId, (tx) => tenantUsage(tx)) : null;
   return {
     usage,
-    user: { id: u.id, email: u.email, name: u.name, twoFactor: !!u.totpEnabledAt, recoveryCodesLeft: u.recoveryCodes?.length ?? 0 },
+    user: {
+      id: u.id,
+      email: u.email,
+      name: u.name,
+      twoFactor: !!u.totpEnabledAt,
+      recoveryCodesLeft: u.recoveryCodes?.length ?? 0,
+      emailVerified: !!u.emailVerifiedAt,
+    },
     tenant: current ? { id: current.tenantId, name: current.name, require2fa: current.require2fa } : null,
     role: current?.role ?? null,
     memberships: memberships.map((m) => ({ tenantId: m.tenantId, name: m.name, role: m.role })),
@@ -230,8 +238,23 @@ export async function disableTwoFactor(db: Db, s: SessionInfo, password: string)
 
 // ---------------------------------------------------------------- приглашения
 
-export async function createInvite(db: Db, tenantId: string, byUserId: string | null, byRole: Role, email: string, role: Role) {
+export async function createInvite(
+  db: Db,
+  tenantId: string,
+  byUserId: string | null,
+  byRole: Role,
+  email: string,
+  role: Role,
+  opts: { requireVerified?: boolean } = {},
+) {
   if (role === "owner" && byRole !== "owner") throw new HttpError(403, "Назначить владельца может только владелец");
+  // Приглашения уходят письмами на любые адреса — только от подтверждённых пользователей и не больше 30 в сутки.
+  if (opts.requireVerified && byUserId && !(await userById(db, byUserId))?.emailVerifiedAt) {
+    throw new HttpError(403, "Сначала подтвердите свой e-mail — ссылка пришла в письме после регистрации (отправить ещё раз можно в профиле)");
+  }
+  const [{ n: today } = { n: 0 }] = await db.execute<{ n: number }>(sql`
+    SELECT count(*)::int AS n FROM invites WHERE tenant_id = ${tenantId} AND created_at > now() - interval '1 day'`);
+  if (today >= 30) throw new HttpError(429, "Не больше 30 приглашений в сутки");
   // Ожидающие приглашения занимают места тарифа.
   const [{ n: pending } = { n: 0 }] = await db.execute<{ n: number }>(sql`
     SELECT count(*)::int AS n FROM invites WHERE tenant_id = ${tenantId} AND accepted_at IS NULL AND expires_at > now()`);
@@ -295,6 +318,7 @@ export async function acceptInvite(db: Db, token: string, v: { name?: string; pa
       ON CONFLICT (tenant_id, user_id) DO UPDATE SET role = EXCLUDED.role`);
   });
   await db.execute(sql`UPDATE invites SET accepted_at = now() WHERE id = ${i.id}`);
+  await db.execute(sql`UPDATE users SET email_verified_at = coalesce(email_verified_at, now()) WHERE id = ${userId}`);
   const pending2fa = !!u.totpEnabledAt;
   return { token: await createSession(db, userId, { tenantId: i.tenantId, pending2fa, ...meta }), twoFactorRequired: pending2fa };
 }
@@ -310,7 +334,23 @@ export async function createResetLink(db: Db, tenantId: string, byUserId: string
   await db.execute(sql`
     INSERT INTO password_resets (user_id, token_hash, created_by, expires_at)
     VALUES (${userId}, ${sha256(token)}, ${byUserId}, now() + make_interval(hours => ${RESET_HOURS}))`);
-  return { token, expiresInHours: RESET_HOURS };
+  const u = (await userById(db, userId))!;
+  return { token, expiresInHours: RESET_HOURS, email: u.email, name: u.name };
+}
+
+/** «Забыли пароль?»: ссылка на 1 час. Нет такого пользователя — null (ответ пользователю тот же). */
+export async function forgotPassword(db: Db, email: string) {
+  const u = await userByEmail(db, email);
+  if (!u?.passwordHash || u.disabledAt) return null;
+  // Не чаще раза в 2 минуты на пользователя — защита ящика от бомбардировки письмами.
+  const [recent] = await db.execute(sql`
+    SELECT 1 FROM password_resets WHERE user_id = ${u.id} AND created_by IS NULL AND created_at > now() - interval '2 minutes'`);
+  if (recent) return null;
+  const token = randomToken();
+  await db.execute(sql`
+    INSERT INTO password_resets (user_id, token_hash, created_by, expires_at)
+    VALUES (${u.id}, ${sha256(token)}, NULL, now() + interval '1 hour')`);
+  return { token, email: u.email, name: u.name, hours: 1 };
 }
 
 async function resetByToken(db: Db, token: string) {
@@ -326,7 +366,10 @@ export const resetInfo = async (db: Db, token: string) => ({ email: (await reset
 export async function resetPassword(db: Db, token: string, password: string) {
   const r = await resetByToken(db, token);
   checkPassword(password);
-  await db.execute(sql`UPDATE users SET password_hash = ${await hashPassword(password)} WHERE id = ${r.userId}`);
+  // Ссылка пришла на почту — адрес подтверждён.
+  await db.execute(sql`
+    UPDATE users SET password_hash = ${await hashPassword(password)}, email_verified_at = coalesce(email_verified_at, now())
+    WHERE id = ${r.userId}`);
   await db.execute(sql`UPDATE password_resets SET used_at = now() WHERE id = ${r.id}`);
   await db.execute(sql`DELETE FROM sessions WHERE user_id = ${r.userId}`);
 }
@@ -408,10 +451,39 @@ export async function signup(db: Db, v: SignupInput, meta: { ip?: string; userAg
       if (v.demo) await createDemoNetwork(tx, tenantId);
     });
     await db.execute(sql`UPDATE users SET last_login_at = now() WHERE id = ${userId}`);
-    return { token: await createSession(db, userId, { tenantId, pending2fa: false, ...meta }), tenantId };
+    return { token: await createSession(db, userId, { tenantId, pending2fa: false, ...meta }), tenantId, userId };
   } catch (e) {
     await withTenant(db, { tenantId }, (tx) => tx.execute(sql`DELETE FROM tenants WHERE id = ${tenantId}`)).catch(() => {});
     await db.execute(sql`DELETE FROM users WHERE email = ${email} AND NOT EXISTS (SELECT 1 FROM sessions WHERE user_id = users.id)`).catch(() => {});
     throw e;
   }
+}
+
+// ---------------------------------------------------------------- подтверждение e-mail
+
+export const VERIFY_HOURS = 48;
+
+/** Новая ссылка подтверждения (прежние перестают действовать). */
+export async function createVerification(db: Db, userId: string) {
+  const u = (await userById(db, userId))!;
+  if (u.emailVerifiedAt) return null;
+  const [recent] = await db.execute(sql`
+    SELECT 1 FROM email_verifications WHERE user_id = ${userId} AND created_at > now() - interval '1 minute'`);
+  if (recent) throw new HttpError(429, "Письмо только что отправлено — проверьте почту (и папку «Спам»)");
+  await db.execute(sql`DELETE FROM email_verifications WHERE user_id = ${userId} AND used_at IS NULL`);
+  const token = randomToken();
+  await db.execute(sql`
+    INSERT INTO email_verifications (user_id, token_hash, expires_at)
+    VALUES (${userId}, ${sha256(token)}, now() + make_interval(hours => ${VERIFY_HOURS}))`);
+  const [m] = await userMemberships(db, userId);
+  return { token, email: u.email, name: u.name, tenantName: m?.name ?? "" };
+}
+
+export async function verifyEmail(db: Db, token: string) {
+  const [v] = await db.execute<{ id: string; userId: string }>(sql`
+    SELECT id, user_id AS "userId" FROM email_verifications
+    WHERE token_hash = ${sha256(token)} AND used_at IS NULL AND expires_at > now()`);
+  if (!v) throw new HttpError(404, "Ссылка не найдена или истекла — запросите новую в профиле");
+  await db.execute(sql`UPDATE email_verifications SET used_at = now() WHERE id = ${v.id}`);
+  await db.execute(sql`UPDATE users SET email_verified_at = coalesce(email_verified_at, now()) WHERE id = ${v.userId}`);
 }
