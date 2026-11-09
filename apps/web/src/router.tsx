@@ -8,6 +8,8 @@ export const router = createBrowserRouter([
   { path: "login", lazy: async () => ({ Component: (await import("./features/auth/LoginPage.js")).LoginPage }) },
   { path: "signup", lazy: async () => ({ Component: (await import("./features/auth/SignupPage.js")).SignupPage }) },
   { path: "invite/:token", lazy: async () => ({ Component: (await import("./features/auth/TokenPages.js")).InvitePage }) },
+  { path: "forgot", lazy: async () => ({ Component: (await import("./features/auth/TokenPages.js")).ForgotPage }) },
+  { path: "verify/:token", lazy: async () => ({ Component: (await import("./features/auth/TokenPages.js")).VerifyPage }) },
   { path: "reset/:token", lazy: async () => ({ Component: (await import("./features/auth/TokenPages.js")).ResetPage }) },
   {
     element: <AppShell />,

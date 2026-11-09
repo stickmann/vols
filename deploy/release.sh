@@ -109,3 +109,15 @@ ensure_admin() {
   # Пароль — через stdin, чтобы его не было в списке процессов и истории команд.
   printf '%s' "$pass" | vols_compose run --rm -T api node dist/create-admin.js --email "$email" --name "$name"
 }
+
+# Адрес сайта для ссылок в письмах: https://<домен>, если сайт открыт по домену и адрес ещё не задан.
+ensure_public_url() {
+  [ -n "$(env_value PUBLIC_URL)" ] && return 0
+  local host
+  host=$(env_value PUBLIC_DOMAIN)
+  [ -n "$host" ] || host=$(env_value SITE_ADDRESS)
+  case "$host" in
+    "" | :* | *[!a-zA-Z0-9.-]* | [0-9]*.[0-9]*.[0-9]*.[0-9]*) return 0 ;; # по IP или порту — ссылки не построить
+  esac
+  set_env PUBLIC_URL "https://$host"
+}

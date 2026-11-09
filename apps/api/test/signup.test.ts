@@ -5,7 +5,7 @@ import { appDb, newTenant, ownerDb } from "./helpers.js";
 
 const db = appDb();
 const owner = ownerDb();
-const open = buildApp({ db: db.db, devTenantHeader: false, signup: true, termsUrl: "https://example.ru/terms" });
+const open = buildApp({ db: db.db, devTenantHeader: false, signup: true, termsUrl: "https://example.ru/terms", mail: false });
 const closed = buildApp({ db: db.db, devTenantHeader: false });
 afterAll(async () => {
   await open.close();
@@ -40,12 +40,12 @@ const form = (over: Record<string, unknown> = {}) => ({
 
 describe("регистрация оператора", () => {
   it("по умолчанию закрыта", async () => {
-    expect((await call(closed, "GET", "/auth/config")).body).toEqual({ signup: false, termsUrl: null });
+    expect((await call(closed, "GET", "/auth/config")).body).toEqual({ signup: false, termsUrl: null, mail: false });
     expect((await call(closed, "POST", "/auth/signup", form())).status).toBe(403);
   });
 
   it("создаёт оператора на бесплатном тарифе со справочниками и демо-сетью, владелец сразу вошёл", async () => {
-    expect((await call(open, "GET", "/auth/config")).body).toEqual({ signup: true, termsUrl: "https://example.ru/terms" });
+    expect((await call(open, "GET", "/auth/config")).body).toEqual({ signup: true, termsUrl: "https://example.ru/terms", mail: false });
     const r = await call(open, "POST", "/auth/signup", form({ company: "  ООО «Свет»  " }));
     expect(r.status).toBe(201);
     const me = (await call(open, "GET", "/auth/me", undefined, r.cookie)).body;

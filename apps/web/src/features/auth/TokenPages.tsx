@@ -181,3 +181,73 @@ export function ResetPage() {
     </AuthCard>
   );
 }
+
+/** «Забыли пароль?» — письмо со ссылкой; ответ одинаковый, есть такой адрес или нет. */
+export function ForgotPage() {
+  const [email, setEmail] = useState("");
+  const send = useMutation({ mutationFn: () => api("/auth/forgot", { method: "POST", body: { email } }) });
+  if (send.isSuccess)
+    return (
+      <AuthCard title="Проверьте почту">
+        <p className="text-sm text-slate-600">
+          Если {email} зарегистрирован, на него пришло письмо со ссылкой для смены пароля. Ссылка действует 1 час. Не видите письма —
+          загляните в «Спам».
+        </p>
+        <Link to="/login" className="mt-4 block text-sm text-brand-700 underline">
+          Вернуться ко входу
+        </Link>
+      </AuthCard>
+    );
+  return (
+    <AuthCard title="Восстановление пароля" subtitle="Пришлём ссылку для смены пароля на e-mail, с которым вы входите.">
+      <form
+        className="space-y-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          send.mutate();
+        }}
+      >
+        <Field label="E-mail">
+          <Input type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />
+        </Field>
+        {send.isError && <Alert>{send.error.message}</Alert>}
+        <Button type="submit" variant="primary" className="w-full" disabled={send.isPending}>
+          Отправить ссылку
+        </Button>
+        <Link to="/login" className="block text-center text-sm text-brand-700 underline">
+          Вернуться ко входу
+        </Link>
+      </form>
+    </AuthCard>
+  );
+}
+
+/** Переход по ссылке из письма подтверждения: подтверждаем сразу. */
+export function VerifyPage() {
+  const { token = "" } = useParams();
+  const qc = useQueryClient();
+  const verify = useQuery({
+    queryKey: ["verify", token],
+    queryFn: async () => {
+      await api(`/auth/verify/${token}`, { method: "POST" });
+      void qc.invalidateQueries({ queryKey: ["auth", "me"] });
+      return true;
+    },
+    retry: false,
+    staleTime: Infinity,
+  });
+  return (
+    <AuthCard title="Подтверждение e-mail">
+      {verify.isPending && <p className="text-sm text-slate-600">Проверяем ссылку…</p>}
+      {verify.isError && <Alert>{verify.error.message}</Alert>}
+      {verify.isSuccess && <Alert tone="success">Адрес подтверждён. Теперь можно приглашать сотрудников.</Alert>}
+      {!verify.isPending && (
+        <Link to="/map" className="mt-4 block">
+          <Button variant="primary" className="w-full">
+            Открыть карту
+          </Button>
+        </Link>
+      )}
+    </AuthCard>
+  );
+}

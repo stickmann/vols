@@ -1,4 +1,7 @@
+import { useMutation } from "@tanstack/react-query";
 import QRCode from "qrcode";
+import { api } from "../../api/client.js";
+import { useAuthConfig } from "./SignupPage.js";
 import { useEffect, useState, type FormEvent } from "react";
 import { Alert, Badge, Button, Field, Input } from "../../components/ui/index.js";
 import { ROLE_LABELS, useChangePassword, useCurrentUser, useDisable2fa, useEnable2fa, useStart2fa } from "./api.js";
@@ -24,6 +27,7 @@ export function ProfilePage() {
           У «{me.tenant?.name}» двухфакторный вход обязателен. Настройте его ниже — после этого откроется работа с сетью.
         </Alert>
       )}
+      <VerifyEmailBanner />
       <TwoFactorSection />
       <PasswordSection />
     </div>
@@ -222,5 +226,27 @@ function PasswordSection() {
         </div>
       </form>
     </Section>
+  );
+}
+
+/** E-mail не подтверждён (почта настроена): без подтверждения нельзя приглашать сотрудников. */
+function VerifyEmailBanner() {
+  const me = useCurrentUser();
+  const mail = useAuthConfig().data?.mail;
+  const resend = useMutation({ mutationFn: () => api("/auth/verify/resend", { method: "POST" }) });
+  if (me.user.emailVerified || !mail) return null;
+  return (
+    <Alert tone="warning">
+      <p>
+        E-mail {me.user.email} не подтверждён — откройте ссылку из письма. Без подтверждения нельзя приглашать сотрудников.
+      </p>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <Button size="sm" onClick={() => resend.mutate()} disabled={resend.isPending || resend.isSuccess}>
+          Отправить письмо ещё раз
+        </Button>
+        {resend.isSuccess && <span className="text-sm">Письмо отправлено — проверьте почту и «Спам».</span>}
+        {resend.isError && <span className="text-sm text-red-700">{resend.error.message}</span>}
+      </div>
+    </Alert>
   );
 }

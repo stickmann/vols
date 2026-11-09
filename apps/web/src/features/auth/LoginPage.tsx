@@ -37,7 +37,8 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [step, setStep] = useState<"password" | "code">("password");
-  const signupOpen = useAuthConfig().data?.signup;
+  const config = useAuthConfig().data;
+  const signupOpen = config?.signup;
 
   const done = async () => {
     await qc.resetQueries();
@@ -104,7 +105,16 @@ export function LoginPage() {
         <Button type="submit" variant="primary" className="w-full" disabled={login.isPending || login2fa.isPending}>
           {step === "password" ? "Войти" : "Подтвердить"}
         </Button>
-        <p className="text-center text-xs text-slate-500">Забыли пароль? Попросите администратора выдать ссылку для смены пароля.</p>
+        {step === "password" &&
+          (config?.mail ? (
+            <p className="text-center text-sm">
+              <Link to="/forgot" className="text-brand-700 underline">
+                Забыли пароль?
+              </Link>
+            </p>
+          ) : (
+            <p className="text-center text-xs text-slate-500">Забыли пароль? Попросите администратора выдать ссылку для смены пароля.</p>
+          ))}
         {signupOpen && step === "password" && (
           <p className="text-center text-sm text-slate-500">
             Нет учётной записи?{" "}

@@ -1,3 +1,4 @@
+import { disabledMailer, type Mailer } from "./services/mail.js";
 import Fastify, { type FastifyRequest } from "fastify";
 import { ZodError } from "zod";
 import type { Db, RequestContext } from "./db/client.js";
@@ -23,6 +24,8 @@ export interface AppOptions {
   /** Открыта ли самостоятельная регистрация операторов. */
   signup?: boolean;
   termsUrl?: string;
+  /** Отправка писем; без неё ссылки приглашений и смены пароля копируются вручную. */
+  mailer?: Mailer;
   logger?: boolean;
 }
 
@@ -33,6 +36,7 @@ export interface AuthContext extends RequestContext {
 declare module "fastify" {
   interface FastifyInstance {
     db: Db;
+    mailer: Mailer;
     requireContext(req: FastifyRequest): AuthContext;
   }
   interface FastifyRequest {
@@ -46,6 +50,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 export function buildApp(opts: AppOptions) {
   const app = Fastify({ logger: opts.logger ?? false, trustProxy: true });
   app.decorate("db", opts.db);
+  app.decorate("mailer", opts.mailer ?? disabledMailer);
   app.decorate("requireContext", (req: FastifyRequest): AuthContext => {
     if (!req.volsCtx) throw new HttpError(401, "Требуется вход");
     return req.volsCtx;

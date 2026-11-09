@@ -31,8 +31,9 @@ try {
 
     const hash = await hashPassword(password);
     const [u] = await db.execute<{ id: string }>(sql`
-      INSERT INTO users (email, name, password_hash) VALUES (${email}, ${name}, ${hash})
-      ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, password_hash = EXCLUDED.password_hash, disabled_at = NULL
+      INSERT INTO users (email, name, password_hash, email_verified_at) VALUES (${email}, ${name}, ${hash}, now())
+      ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, password_hash = EXCLUDED.password_hash, disabled_at = NULL,
+        email_verified_at = coalesce(users.email_verified_at, now())
       RETURNING id`);
     const tenant = arg("tenant");
     const tenants = await db.execute<{ id: string; name: string }>(

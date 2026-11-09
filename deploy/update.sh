@@ -32,6 +32,7 @@ if [ -z "${VOLS_RELEASE_READY:-}" ]; then
 fi
 
 set_env VOLS_VERSION "$(app_version)"
+ensure_public_url
 # С версии со входом по паролю: общий пароль сайта (basic auth) убран, поэтому режим выбора
 # оператора заголовком выключается до пересборки — иначе API на минуту был бы открыт без входа.
 set_env ALLOW_TENANT_HEADER "false"

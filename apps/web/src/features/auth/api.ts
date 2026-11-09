@@ -34,7 +34,7 @@ export interface Usage {
 export const PLAN_LABELS: Record<Usage["plan"], string> = { free: "Бесплатный", unlimited: "Без ограничений" };
 
 export interface Me {
-  user: { id: string; email: string; name: string; twoFactor: boolean; recoveryCodesLeft: number };
+  user: { id: string; email: string; name: string; twoFactor: boolean; recoveryCodesLeft: number; emailVerified: boolean };
   tenant: { id: string; name: string; require2fa: boolean } | null;
   role: Role | null;
   memberships: { tenantId: string; name: string; role: Role }[];

@@ -6,7 +6,7 @@ import { Alert, Button, Field, Input } from "../../components/ui/index.js";
 import { AuthCard } from "./LoginPage.js";
 
 export const useAuthConfig = () =>
-  useQuery({ queryKey: ["auth", "config"], queryFn: () => api<{ signup: boolean; termsUrl: string | null }>("/auth/config"), staleTime: 300_000 });
+  useQuery({ queryKey: ["auth", "config"], queryFn: () => api<{ signup: boolean; termsUrl: string | null; mail: boolean }>("/auth/config"), staleTime: 300_000 });
 
 /** Регистрация оператора: компания и её владелец. Бесплатный тариф, по желанию — демо-сеть. */
 export function SignupPage() {
